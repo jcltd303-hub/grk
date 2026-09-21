@@ -1,0 +1,6 @@
+{
+  "name": "2D Skeletal Rigging & Animation Studio",
+  "description": "Interactive 2D character rigging studio with skeletal deformation, mesh skinning, inverse kinematics (IK), presets, and animation timeline.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
