@@ -36,7 +36,23 @@ jobs:
         run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
 
       - name: Build production artifact
-        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+        id: build
+        continue-on-error: true
+        run: |
+          set +e
+          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}" > build.log 2>&1
+          status=$?
+          cat build.log
+          exit $status
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grk-vercel-build-log
+          path: build.log
+          if-no-files-found: error
 
       - name: Deploy production artifact
+        if: steps.build.outcome == 'success'
         run: vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
