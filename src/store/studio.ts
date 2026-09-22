@@ -760,7 +760,10 @@ class StudioStore {
   }
 
   public setMode(mode: StudioMode) {
-    if (mode === 'rig' || mode === 'weights') {
+    // Weight painting is no longer an editing mode. Legacy callers that request
+    // "weights" are routed to rig mode so automatic geometry skinning remains canonical.
+    if (mode === 'weights') mode = 'rig';
+    if (mode === 'rig') {
       // Switching into Rig or Weights mode: unbend character completely back to rest pose
       const { skeleton, restSkeleton, mesh } = this.state;
       if (skeleton && restSkeleton) {
@@ -776,10 +779,7 @@ class StudioStore {
       if (mesh) {
         resetMeshToRest(mesh);
       }
-      if (mode === 'weights') {
-        this.state.showWeights = true;
-        this.state.tool = 'weight_brush';
-      } else if (this.state.tool === 'ik' || this.state.tool === 'weight_brush') {
+      if (this.state.tool === 'ik' || this.state.tool === 'weight_brush') {
         this.state.tool = 'select';
       }
     } else if (mode === 'pose' || mode === 'animate') {
