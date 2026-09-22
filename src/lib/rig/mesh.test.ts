@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateMesh, inferBoneWidthsFromMeshGeometry } from './mesh';
+import { generateMesh, inferBoneWidthsFromMeshGeometry, computeAutoWeights } from './mesh';
 import { updateWorldTransforms } from './skeleton';
 import type { Skeleton } from './types';
 
@@ -62,4 +62,70 @@ test('auto-fit width remains stable when pre-existing vertex weights are changed
 
   assert.equal(first.bones[0].startWidth, second.bones[0].startWidth);
   assert.equal(first.bones[0].endWidth, second.bones[0].endWidth);
+});
+
+
+test('automatic weights overwrite manual weights deterministically from geometry', () => {
+  const mesh = generateMesh(140, 100, 14, 10);
+  const skeleton = makeSkeleton();
+  skeleton.bones.push({
+    id: 'body2',
+    name: 'Body2',
+    parentId: 'body',
+    localAngle: 0,
+    length: 30,
+    color: '#fff',
+    start: { x: 100, y: 50 },
+    end: { x: 130, y: 50 },
+    worldAngle: 0,
+    startWidth: 30,
+    endWidth: 24,
+  });
+  updateWorldTransforms(skeleton);
+
+  for (const vertex of mesh.vertices) {
+    vertex.weights = [{ boneId: 'manual', weight: 1 }];
+  }
+
+  computeAutoWeights(mesh, skeleton);
+
+  assert.ok(mesh.vertices.every((v) =>
+    v.weights.length > 0 &&
+    v.weights.every((w) => w.boneId === 'body' || w.boneId === 'body2') &&
+    Math.abs(v.weights.reduce((sum, w) => sum + w.weight, 0) - 1) < 1e-6
+  ));
+});
+
+test('automatic weights blend across a connected joint', () => {
+  const mesh = generateMesh(160, 120, 16, 12);
+  const skeleton: Skeleton = {
+    bones: [
+      {
+        id: 'a', name: 'A', parentId: null, localAngle: 0, length: 70,
+        color: '#fff', start: { x: 30, y: 60 }, end: { x: 90, y: 60 },
+        worldAngle: 0, startWidth: 34, endWidth: 34,
+      },
+      {
+        id: 'b', name: 'B', parentId: 'a', localAngle: Math.PI / 2, length: 55,
+        color: '#fff', start: { x: 90, y: 60 }, end: { x: 90, y: 115 },
+        worldAngle: Math.PI / 2, startWidth: 34, endWidth: 26,
+      },
+    ],
+    rootId: 'a',
+    rootPos: { x: 30, y: 60 },
+    restRootPos: { x: 30, y: 60 },
+    restBones: {
+      a: { localAngle: 0, length: 70 },
+      b: { localAngle: Math.PI / 2, length: 55 },
+    },
+  };
+  updateWorldTransforms(skeleton);
+
+  computeAutoWeights(mesh, skeleton);
+
+  const joint = mesh.vertices
+    .filter((v) => Math.hypot(v.originalX - 90, v.originalY - 60) < 10)
+    .filter((v) => v.weights.some((w) => w.boneId === 'a') && v.weights.some((w) => w.boneId === 'b'));
+
+  assert.ok(joint.length > 0);
 });
