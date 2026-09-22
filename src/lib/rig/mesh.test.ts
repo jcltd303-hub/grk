@@ -29,7 +29,9 @@ function makeSkeleton(): Skeleton {
 }
 
 test('infers bone widths from mesh geometry instead of existing weights or widths', () => {
-  const mesh = generateMesh(120, 100, 10, 10);
+  const alpha = new Uint8Array(120 * 100);
+  for (let y = 30; y <= 70; y++) for (let x = 10; x <= 110; x++) alpha[y * 120 + x] = 255;
+  const mesh = generateMesh(120, 100, 10, 10, alpha);
   const skeleton = makeSkeleton();
 
   inferBoneWidthsFromMeshGeometry(mesh, skeleton);
@@ -42,7 +44,9 @@ test('infers bone widths from mesh geometry instead of existing weights or width
 });
 
 test('auto-fit width remains stable when pre-existing vertex weights are changed', () => {
-  const mesh = generateMesh(120, 100, 10, 10);
+  const alpha = new Uint8Array(120 * 100);
+  for (let y = 30; y <= 70; y++) for (let x = 10; x <= 110; x++) alpha[y * 120 + x] = 255;
+  const mesh = generateMesh(120, 100, 10, 10, alpha);
   const first = makeSkeleton();
   const second = makeSkeleton();
 
