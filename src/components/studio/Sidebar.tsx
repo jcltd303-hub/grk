@@ -47,7 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   const activeClipId = useStudioStore((s) => s.activeClipId);
   const isPlaying = useStudioStore((s) => s.isPlaying);
   const canUndo = useStudioStore((s) => s.canUndo);
-  const canRedo = useStudioStore((s) => s.canRedo);
+  const canRedo = useStudioStore((s) => s.canRedo);\n  const meshAvailable = useStudioStore((s) => !!s.mesh);
 
   const [activeTab, setActiveTab] = useState<'bones' | 'animations' | 'export'>('bones');
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -214,21 +214,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
         </button>
 
         <button
-          onClick={() => {
-            setActiveTab('weights');
-            if (mode !== 'weights') studioStore.setMode('weights');
-          }}
-          className={`flex-1 py-2 font-medium flex items-center justify-center gap-1 border-b-2 transition ${
-            activeTab === 'weights'
-              ? 'border-sky-500 text-sky-400 bg-slate-800/30'
-              : 'border-transparent text-slate-400 hover:text-white'
-          }`}
-        >
-          <Paintbrush className="w-3.5 h-3.5" />
-          <span>Weights</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('animations')}
           className={`flex-1 py-2 font-medium flex items-center justify-center gap-1 border-b-2 transition ${
             activeTab === 'animations'
@@ -367,15 +352,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                 <RotateCcw className="w-3.5 h-3.5" />
                 Reset Pose
               </button>
+
+            </div>
+
+            {/* Automatic Skinning */}
+            <div className="p-3.5 bg-emerald-500/5 border border-emerald-500/25 rounded-xl space-y-2.5">
+              <div className="flex items-center gap-2">
+                <Wand2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-xs font-semibold text-emerald-300">Automatic Skinning</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                GRK derives bone envelopes and normalized vertex influences directly from the artwork geometry. No weight painting is required.
+              </p>
               <button
-                id="btn_auto_weights"
+                id="btn_auto_skin_geometry"
                 onClick={() => studioStore.recomputeWeights()}
-                title="Recalculate Skinning Weights"
-                className="px-3 py-2 bg-slate-800/70 hover:bg-slate-750 border border-slate-700 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 text-slate-300 hover:text-white transition"
+                disabled={!meshAvailable}
+                className="w-full py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-30 disabled:pointer-events-none text-emerald-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition"
               >
-                <Wand2 className="w-3.5 h-3.5 text-emerald-400" />
-                Auto-Weights
+                <Sparkles className="w-3.5 h-3.5" />
+                Rebuild Automatic Skin
               </button>
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500">
+                <span>✓ Geometry widths</span><span>✓ 4-way influences</span>
+                <span>✓ Joint blending</span><span>✓ Normalized weights</span>
+              </div>
             </div>
 
             {/* Selected Bone Inspector */}
