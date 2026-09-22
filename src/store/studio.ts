@@ -1430,24 +1430,6 @@ class StudioStore {
     this.refreshAutomaticSkinning();
   }
 
-    const allBoneIds = skeleton.bones.map((b) => b.id);
-    const useRestCoords = mode === 'rig' || mode === 'weights';
-
-    const modified = applyWeightBrush(
-      mesh,
-      worldPos,
-      selectedBoneId,
-      allBoneIds,
-      weightBrushSettings,
-      useRestCoords
-    );
-
-    if (modified) {
-      this.updateDeformedMesh();
-      // Trigger shallow state update on mesh to notify React/Canvas listeners
-      this.setState({ mesh: { ...mesh } });
-    }
-  }
 
   public smoothAllWeightsForBone(boneId?: string) {
     const { mesh, skeleton, selectedBoneId } = this.state;
