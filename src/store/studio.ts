@@ -790,8 +790,8 @@ class StudioStore {
       const { skeleton, mesh } = this.state;
       if (skeleton && skeleton.bones.length > 0) {
         this.state.restSkeleton = cloneSkeleton(skeleton);
-        if (mesh && !mesh.vertices.some((v) => v.weights.length > 0)) {
-          computeAutoWeights(mesh, skeleton);
+        if (mesh) {
+          this.refreshAutomaticSkinning();
         }
       }
     }
@@ -874,7 +874,6 @@ class StudioStore {
     }
 
     this.updateDeformedMesh();
-    this.refreshAutomaticSkinning();
   }
 
   public setBoneName(boneId: string, name: string) {
@@ -1424,9 +1423,12 @@ class StudioStore {
     });
   }
 
-  public paintWeights(worldPos: Point2D) {
-    const { mesh, skeleton, selectedBoneId, weightBrushSettings, mode } = this.state;
-    if (!mesh || !skeleton || !selectedBoneId) return;
+  public paintWeights(_worldPos: Point2D) {
+    // Manual weight painting is intentionally obsolete. Automatic geometry
+    // skinning is the single source of truth; keep this method only so older
+    // serialized/UI callers do not crash.
+    this.refreshAutomaticSkinning();
+  }
 
     const allBoneIds = skeleton.bones.map((b) => b.id);
     const useRestCoords = mode === 'rig' || mode === 'weights';
