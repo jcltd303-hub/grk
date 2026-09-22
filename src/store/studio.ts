@@ -331,9 +331,10 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      computeAutoWeights(this.state.mesh, this.state.skeleton);
+      this.refreshAutomaticSkinning();
+    } else {
+      this.updateDeformedMesh();
     }
-    this.updateDeformedMesh();
   }
 
   public redo() {
@@ -897,8 +898,7 @@ class StudioStore {
       if (rb) rb.startWidth = bone.startWidth;
     }
 
-    if (mesh) computeAutoWeights(mesh, skeleton);
-    this.updateDeformedMesh();
+    this.refreshAutomaticSkinning();
   }
 
   public setBoneEndWidth(boneId: string, width: number) {
@@ -913,8 +913,7 @@ class StudioStore {
       if (rb) rb.endWidth = bone.endWidth;
     }
 
-    if (mesh) computeAutoWeights(mesh, skeleton);
-    this.updateDeformedMesh();
+    this.refreshAutomaticSkinning();
   }
 
   public setBoneWidths(boneId: string, startWidth: number, endWidth: number) {
@@ -933,8 +932,7 @@ class StudioStore {
       }
     }
 
-    if (mesh) computeAutoWeights(mesh, skeleton);
-    this.updateDeformedMesh();
+    this.refreshAutomaticSkinning();
   }
 
   public toggleBonePin(boneId: string) {
@@ -988,13 +986,13 @@ class StudioStore {
       // In rig mode, adjust rest geometry directly - DO NOT BEND!
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      if (mesh) computeAutoWeights(mesh, skeleton);
+      this.refreshAutomaticSkinning();
       this.notify();
       return;
     }
 
     this.updateDeformedMesh();
-    if (mesh) computeAutoWeights(mesh, skeleton);
+    this.refreshAutomaticSkinning();
   }
 
   /**
@@ -1065,11 +1063,7 @@ class StudioStore {
         selectedBoneId: masterBone.id,
       });
 
-      this.updateDeformedMesh();
-      if (mesh) {
-        inferBoneWidthsFromMeshGeometry(mesh, newSkeleton);
-        computeAutoWeights(mesh, newSkeleton);
-      }
+      this.refreshAutomaticSkinning();
       return masterBone;
     }
 
@@ -1166,11 +1160,7 @@ class StudioStore {
       selectedBoneId: newBone.id,
     });
 
-    this.updateDeformedMesh();
-    if (mesh) {
-      inferBoneWidthsFromMeshGeometry(mesh, skeleton);
-      computeAutoWeights(mesh, skeleton);
-    }
+    this.refreshAutomaticSkinning();
     return newBone;
   }
 
@@ -1237,8 +1227,8 @@ class StudioStore {
       selectedBoneId: nextSelected,
     });
 
-    this.updateDeformedMesh();
-    if (mesh && skeleton.bones.length > 0) computeAutoWeights(mesh, skeleton);
+    if (mesh && skeleton.bones.length > 0) this.refreshAutomaticSkinning();
+    else this.updateDeformedMesh();
   }
 
   public clearAllBones() {
@@ -1263,7 +1253,8 @@ class StudioStore {
       tool: 'add_bone',
       mode: 'rig',
     });
-    this.notify();
+    if (skeleton.bones.length > 0) this.refreshAutomaticSkinning();
+    else this.notify();
   }
 
   public selectPreviousBone() {
@@ -1391,7 +1382,8 @@ class StudioStore {
       }
     }
 
-    this.updateDeformedMesh();
+    if (ok) this.refreshAutomaticSkinning();
+    else this.updateDeformedMesh();
     return ok;
   }
 
@@ -1416,8 +1408,7 @@ class StudioStore {
 
     if (newBone) {
       this.setSelectedBoneId(newBone.id);
-      if (mesh) computeAutoWeights(mesh, skeleton);
-      this.updateDeformedMesh();
+      this.refreshAutomaticSkinning();
     }
 
     return newBone;
