@@ -414,146 +414,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                   />
                 </div>
 
-                {/* 2 Dedicated Sliders for Bone Width (Pivot startWidth & Tip endWidth) */}
-                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2.5">
+                {/* Automatic Envelope Inspector */}
+                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-sky-400 flex items-center gap-1">
-                      <span>Envelope Widths (Influence)</span>
-                    </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      {Math.round(selectedBone.startWidth ?? 24)}px → {Math.round(selectedBone.endWidth ?? 16)}px
-                    </span>
+                    <span className="font-semibold text-emerald-400">Automatic Envelope</span>
+                    <span className="text-[10px] text-slate-500">Geometry-derived</span>
                   </div>
-
-                  {/* Slider 1: Start Width (Root/Pivot End) */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-slate-300">
-                      <span className="text-slate-400">1. Start Width (Pivot)</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() =>
-                            studioStore.setBoneStartWidth(
-                              selectedBone.id,
-                              Math.max(2, (selectedBone.startWidth ?? 24) - 2)
-                            )
-                          }
-                          className="px-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-mono"
-                        >
-                          -
-                        </button>
-                        <span className="font-mono text-white font-semibold text-[11px] w-8 text-center">
-                          {Math.round(selectedBone.startWidth ?? 24)}px
-                        </span>
-                        <button
-                          onClick={() =>
-                            studioStore.setBoneStartWidth(
-                              selectedBone.id,
-                              Math.min(500, (selectedBone.startWidth ?? 24) + 4)
-                            )
-                          }
-                          className="px-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded text-[10px] font-mono"
-                        >
-                          +
-                        </button>
-                      </div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="rounded-lg bg-slate-800/70 px-2 py-1.5">
+                      <span className="text-slate-500 block">Start width</span>
+                      <span className="font-mono text-white">{Math.round(selectedBone.startWidth ?? 24)}px</span>
                     </div>
-                    <input
-                      type="range"
-                      id="slider_bone_start_width"
-                      min="2"
-                      max="400"
-                      value={Math.round(selectedBone.startWidth ?? 24)}
-                      onChange={(e) =>
-                        studioStore.setBoneStartWidth(selectedBone.id, Number(e.target.value))
-                      }
-                      onInput={(e) =>
-                        studioStore.setBoneStartWidth(
-                          selectedBone.id,
-                          Number((e.target as HTMLInputElement).value)
-                        )
-                      }
-                      className="w-full accent-sky-500 cursor-pointer"
-                    />
-                  </div>
-
-                  {/* Slider 2: End Width (Tip End) */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px] text-slate-300">
-                      <span className="text-slate-400">2. End Width (Tip)</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() =>
-                            studioStore.setBoneEndWidth(
-                              selectedBone.id,
-                              Math.max(2, (selectedBone.endWidth ?? 16) - 4)
-                            )
-                          }
-                          className="px-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded text-[10px] font-mono"
-                        >
-                          -
-                        </button>
-                        <span className="font-mono text-white font-semibold text-[11px] w-9 text-center">
-                          {Math.round(selectedBone.endWidth ?? 16)}px
-                        </span>
-                        <button
-                          onClick={() =>
-                            studioStore.setBoneEndWidth(
-                              selectedBone.id,
-                              Math.min(500, (selectedBone.endWidth ?? 16) + 4)
-                            )
-                          }
-                          className="px-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 rounded text-[10px] font-mono"
-                        >
-                          +
-                        </button>
-                      </div>
+                    <div className="rounded-lg bg-slate-800/70 px-2 py-1.5">
+                      <span className="text-slate-500 block">End width</span>
+                      <span className="font-mono text-white">{Math.round(selectedBone.endWidth ?? 16)}px</span>
                     </div>
-                    <input
-                      type="range"
-                      id="slider_bone_end_width"
-                      min="2"
-                      max="400"
-                      value={Math.round(selectedBone.endWidth ?? 16)}
-                      onChange={(e) =>
-                        studioStore.setBoneEndWidth(selectedBone.id, Number(e.target.value))
-                      }
-                      onInput={(e) =>
-                        studioStore.setBoneEndWidth(
-                          selectedBone.id,
-                          Number((e.target as HTMLInputElement).value)
-                        )
-                      }
-                      className="w-full accent-sky-500 cursor-pointer"
-                    />
                   </div>
-
-                  {/* Quick Width Presets */}
-                  <div className="grid grid-cols-4 gap-1 pt-0.5">
-                    <button
-                      onClick={() => studioStore.setBoneWidths(selectedBone.id, 16, 10)}
-                      className="py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[9px] font-medium"
-                    >
-                      Slim
-                    </button>
-                    <button
-                      onClick={() => studioStore.setBoneWidths(selectedBone.id, 38, 24)}
-                      className="py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[9px] font-medium"
-                    >
-                      Medium
-                    </button>
-                    <button
-                      onClick={() => studioStore.setBoneWidths(selectedBone.id, 90, 60)}
-                      className="py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[9px] font-medium"
-                    >
-                      Thick
-                    </button>
-                    <button
-                      onClick={() => studioStore.setBoneWidths(selectedBone.id, 180, 120)}
-                      className="py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-[9px] font-medium"
-                    >
-                      Mega
-                    </button>
-                  </div>
+                  <p className="text-[10px] leading-relaxed text-slate-500">
+                    Widths are fitted from artwork geometry and rebuilt automatically when the rig changes.
+                  </p>
                 </div>
 
                 {/* Local Rotation & Quick Nudges */}
