@@ -884,7 +884,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
       {/* FLOATING SELECTED BONE WIDTH SLIDERS & PIN OVERLAY (When a bone is selected) */}
       {selectedBone && (
-        <div className="absolute top-14 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-2xl p-3 shadow-2xl z-20 w-64 text-xs space-y-2.5">
+        <div className="hidden md:block absolute top-14 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-2xl p-3 shadow-2xl z-20 w-64 text-xs space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 min-w-0">
               <span
