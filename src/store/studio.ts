@@ -357,9 +357,10 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      computeAutoWeights(this.state.mesh, this.state.skeleton);
+      this.refreshAutomaticSkinning();
+    } else {
+      this.updateDeformedMesh();
     }
-    this.updateDeformedMesh();
   }
 
   public init() {
