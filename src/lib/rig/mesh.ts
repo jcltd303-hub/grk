@@ -159,8 +159,91 @@ export function computeAutoWeights(
 }
 
 /**
- * Optimizes bone start and end widths to closely cover mesh vertex extents,
- * and then computes smooth auto weights.
+ * Infers bone envelopes directly from mesh geometry.
+ *
+ * This intentionally does not read vertex weights or existing bone widths, so
+ * automatic rigging cannot become circular or inherit stale/manual weighting.
+ */
+export function inferBoneWidthsFromMeshGeometry(mesh: RigMesh, skeleton: Skeleton): void {
+  if (mesh.vertices.length === 0 || skeleton.bones.length === 0) return;
+
+  const measurements = new Map<string, { start: number[]; end: number[]; all: number[] }>();
+  for (const bone of skeleton.bones) {
+    measurements.set(bone.id, { start: [], end: [], all: [] });
+  }
+
+  for (const vertex of mesh.vertices) {
+    const p = { x: vertex.originalX, y: vertex.originalY };
+    let closestBone: { id: string; distance: number; t: number } | null = null;
+
+    for (const bone of skeleton.bones) {
+      const bx = bone.end.x - bone.start.x;
+      const by = bone.end.y - bone.start.y;
+      const lenSq = bx * bx + by * by;
+      if (lenSq < 0.0001) continue;
+
+      const t = Math.max(0, Math.min(1, ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq));
+      const projX = bone.start.x + t * bx;
+      const projY = bone.start.y + t * by;
+      const distance = Math.hypot(p.x - projX, p.y - projY);
+
+      if (!closestBone || distance < closestBone.distance) {
+        closestBone = { id: bone.id, distance, t };
+      }
+    }
+
+    if (!closestBone) continue;
+    const measurement = measurements.get(closestBone.id)!;
+    measurement.all.push(closestBone.distance);
+    if (closestBone.t <= 0.35) measurement.start.push(closestBone.distance);
+    if (closestBone.t >= 0.65) measurement.end.push(closestBone.distance);
+  }
+
+  const percentile = (values: number[], p: number): number => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+    return sorted[index];
+  };
+
+  for (const bone of skeleton.bones) {
+    const measurement = measurements.get(bone.id)!;
+    const length = Math.max(8, Math.hypot(bone.end.x - bone.start.x, bone.end.y - bone.start.y));
+    const fallback = Math.min(80, Math.max(12, length * 0.22));
+    const middle = percentile(measurement.all, 0.65);
+    const startRadius = percentile(measurement.start, 0.65) || middle || fallback * 0.5;
+    const endRadius = percentile(measurement.end, 0.65) || middle || fallback * 0.5;
+
+    bone.startWidth = Math.max(12, Math.min(320, Math.round(startRadius * 2.2)));
+    bone.endWidth = Math.max(8, Math.min(320, Math.round(endRadius * 2.2)));
+  }
+
+  // Keep connected envelopes continuous at joints.
+  for (const parent of skeleton.bones) {
+    const children = skeleton.bones.filter((child) => child.parentId === parent.id);
+    if (children.length === 0) continue;
+    const childAverage = children.reduce((sum, child) => sum + (child.startWidth ?? 20), 0) / children.length;
+    const jointWidth = Math.round(((parent.endWidth ?? 20) + childAverage) * 0.5);
+    parent.endWidth = jointWidth;
+    for (const child of children) child.startWidth = jointWidth;
+  }
+
+  if (skeleton.restBones) {
+    for (const bone of skeleton.bones) {
+      if (skeleton.restBones[bone.id]) {
+        skeleton.restBones[bone.id] = {
+          ...skeleton.restBones[bone.id],
+          startWidth: bone.startWidth,
+          endWidth: bone.endWidth,
+        };
+      }
+    }
+  }
+}
+
+/**
+ * Optimizes bone widths from geometry first, then computes smooth automatic weights.
+ * This is retained as the public compatibility entry point for existing callers.
  */
 export function optimizeBoneWidthsAndComputeWeights(
   mesh: RigMesh,
@@ -169,59 +252,7 @@ export function optimizeBoneWidthsAndComputeWeights(
   power: number = 2.8
 ): void {
   if (skeleton.bones.length === 0) return;
-
-  // First pass: compute initial weights to know vertex association
-  computeAutoWeights(mesh, skeleton, maxInfluencesPerVertex, power);
-
-  // Second pass: for each bone, find associated vertices and calculate tight enclosing widths
-  for (const bone of skeleton.bones) {
-    const bx = bone.end.x - bone.start.x;
-    const by = bone.end.y - bone.start.y;
-    const lenSq = bx * bx + by * by;
-    const len = Math.hypot(bx, by);
-    if (len < 0.001) continue;
-
-    let startDistMax = 0;
-    let startCount = 0;
-    let endDistMax = 0;
-    let endCount = 0;
-
-    for (const v of mesh.vertices) {
-      const p = { x: v.originalX, y: v.originalY };
-      const influence = v.weights.find((w) => w.boneId === bone.id);
-      if (!influence || influence.weight < 0.12) continue;
-
-      let t = 0;
-      let dist = 0;
-      if (lenSq < 0.0001) {
-        dist = Math.hypot(p.x - bone.start.x, p.y - bone.start.y);
-      } else {
-        t = Math.max(0, Math.min(1, ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq));
-        const projX = bone.start.x + t * bx;
-        const projY = bone.start.y + t * by;
-        dist = Math.hypot(p.x - projX, p.y - projY);
-      }
-
-      if (t <= 0.5) {
-        startDistMax = Math.max(startDistMax, dist);
-        startCount++;
-      } else {
-        endDistMax = Math.max(endDistMax, dist);
-        endCount++;
-      }
-    }
-
-    const defaultStart = Math.min(120, Math.max(20, len * 0.35));
-    const defaultEnd = Math.min(100, Math.max(16, len * 0.25));
-
-    const measuredStart = startCount > 0 ? startDistMax * 2 * 1.35 : defaultStart;
-    const measuredEnd = endCount > 0 ? endDistMax * 2 * 1.35 : defaultEnd;
-
-    bone.startWidth = Math.max(10, Math.min(400, Math.round(measuredStart)));
-    bone.endWidth = Math.max(8, Math.min(400, Math.round(measuredEnd)));
-  }
-
-  // Third pass: recompute auto weights with the newly optimized bone widths
+  inferBoneWidthsFromMeshGeometry(mesh, skeleton);
   computeAutoWeights(mesh, skeleton, maxInfluencesPerVertex, power);
 }
 
