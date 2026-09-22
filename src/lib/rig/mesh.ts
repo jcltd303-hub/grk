@@ -103,58 +103,89 @@ export function computeAutoWeights(
   maxInfluencesPerVertex: number = 4,
   power: number = 2.8
 ): void {
-  if (skeleton.bones.length === 0) return;
+  if (mesh.vertices.length === 0 || skeleton.bones.length === 0) return;
 
-  for (const vertex of mesh.vertices) {
+  const bones = skeleton.bones;
+  const safePower = Math.max(1.5, power);
+  const influenceLimit = Math.max(1, Math.min(8, Math.floor(maxInfluencesPerVertex)));
+
+  type Candidate = { boneId: string; score: number; distance: number; t: number };
+  const candidatesFor = (vertex: Vertex): Candidate[] => {
     const p = { x: vertex.originalX, y: vertex.originalY };
-    const boneScores: { boneId: string; weight: number }[] = [];
+    const candidates: Candidate[] = [];
 
-    for (const bone of skeleton.bones) {
-      const startWidth = Math.max(2, bone.startWidth ?? 24);
-      const endWidth = Math.max(2, bone.endWidth ?? 16);
-
-      // Vector from bone start to end
+    for (const bone of bones) {
       const bx = bone.end.x - bone.start.x;
       const by = bone.end.y - bone.start.y;
       const lenSq = bx * bx + by * by;
-
       let t = 0;
-      let dist = 0;
+      let distance: number;
 
       if (lenSq < 0.0001) {
-        dist = Math.hypot(p.x - bone.start.x, p.y - bone.start.y);
+        distance = Math.hypot(p.x - bone.start.x, p.y - bone.start.y);
       } else {
-        t = Math.max(0, Math.min(1, ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq));
-        const projX = bone.start.x + t * bx;
-        const projY = bone.start.y + t * by;
-        dist = Math.hypot(p.x - projX, p.y - projY);
+        t = Math.max(0, Math.min(1,
+          ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq
+        ));
+        const px = bone.start.x + t * bx;
+        const py = bone.start.y + t * by;
+        distance = Math.hypot(p.x - px, p.y - py);
       }
 
-      // Radius of influence envelope at projection point t
-      const radiusAtT = ((1 - t) * startWidth + t * endWidth) * 0.5;
+      const startWidth = Math.max(4, bone.startWidth ?? 24);
+      const endWidth = Math.max(4, bone.endWidth ?? 16);
+      const radius = Math.max(3, ((1 - t) * startWidth + t * endWidth) * 0.5);
 
-      // Normalized distance relative to envelope radius
-      const normalizedDist = dist / (radiusAtT + 2);
-      const score = 1 / (Math.pow(normalizedDist, power) + 0.005);
+      // Geometry-aware falloff: nearby vertices receive strong influence, while
+      // bones whose envelope does not reach the vertex decay rapidly.
+      const normalized = distance / (radius + 1.5);
+      const envelope = 1 / (1 + Math.pow(normalized, safePower));
 
-      boneScores.push({ boneId: bone.id, weight: score });
+      // Keep joint regions blended, but prevent distant bones from becoming
+      // accidental influences merely because inverse-distance never reaches zero.
+      const jointBoost = (t < 0.12 || t > 0.88) ? 1.08 : 1;
+      const score = envelope * jointBoost;
+
+      if (score > 0.0005) {
+        candidates.push({ boneId: bone.id, score, distance, t });
+      }
     }
 
-    // Sort descending by score
-    boneScores.sort((a, b) => b.weight - a.weight);
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates;
+  };
 
-    // Keep top N influences
-    const topInfluences = boneScores.slice(0, maxInfluencesPerVertex);
-    const sum = topInfluences.reduce((acc, curr) => acc + curr.weight, 0);
+  for (const vertex of mesh.vertices) {
+    const candidates = candidatesFor(vertex);
 
-    if (sum > 0.00001) {
-      vertex.weights = topInfluences.map((inf) => ({
-        boneId: inf.boneId,
-        weight: inf.weight / sum,
-      }));
-    } else {
-      vertex.weights = [{ boneId: skeleton.bones[0].id, weight: 1.0 }];
+    if (candidates.length === 0) {
+      // Deterministic nearest-bone fallback.
+      let nearest = bones[0];
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const bone of bones) {
+        const d = distToSegment(
+          { x: vertex.originalX, y: vertex.originalY },
+          bone.start,
+          bone.end
+        );
+        if (d < nearestDistance) {
+          nearestDistance = d;
+          nearest = bone;
+        }
+      }
+      vertex.weights = [{ boneId: nearest.id, weight: 1 }];
+      continue;
     }
+
+    const top = candidates.slice(0, influenceLimit);
+    const total = top.reduce((sum, candidate) => sum + candidate.score, 0);
+
+    vertex.weights = top.map((candidate) => ({
+      boneId: candidate.boneId,
+      weight: candidate.score / Math.max(total, 0.000001),
+    }));
+
+    normalizeVertexWeights(vertex, top[0].boneId);
   }
 }
 
@@ -167,14 +198,13 @@ export function computeAutoWeights(
 export function inferBoneWidthsFromMeshGeometry(mesh: RigMesh, skeleton: Skeleton): void {
   if (mesh.vertices.length === 0 || skeleton.bones.length === 0) return;
 
-  const measurements = new Map<string, { start: number[]; end: number[]; all: number[] }>();
-  for (const bone of skeleton.bones) {
-    measurements.set(bone.id, { start: [], end: [], all: [] });
-  }
+  type Sample = { t: number; distance: number };
+  const samples = new Map<string, Sample[]>();
+  for (const bone of skeleton.bones) samples.set(bone.id, []);
 
   for (const vertex of mesh.vertices) {
     const p = { x: vertex.originalX, y: vertex.originalY };
-    let closestBone: { id: string; distance: number; t: number } | null = null;
+    let closest: { bone: typeof skeleton.bones[number]; distance: number; t: number } | null = null;
 
     for (const bone of skeleton.bones) {
       const bx = bone.end.x - bone.start.x;
@@ -182,61 +212,81 @@ export function inferBoneWidthsFromMeshGeometry(mesh: RigMesh, skeleton: Skeleto
       const lenSq = bx * bx + by * by;
       if (lenSq < 0.0001) continue;
 
-      const t = Math.max(0, Math.min(1, ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq));
-      const projX = bone.start.x + t * bx;
-      const projY = bone.start.y + t * by;
-      const distance = Math.hypot(p.x - projX, p.y - projY);
+      const t = Math.max(0, Math.min(1,
+        ((p.x - bone.start.x) * bx + (p.y - bone.start.y) * by) / lenSq
+      ));
+      const px = bone.start.x + t * bx;
+      const py = bone.start.y + t * by;
+      const distance = Math.hypot(p.x - px, p.y - py);
 
-      if (!closestBone || distance < closestBone.distance) {
-        closestBone = { id: bone.id, distance, t };
+      if (!closest || distance < closest.distance) {
+        closest = { bone, distance, t };
       }
     }
 
-    if (!closestBone) continue;
-    const measurement = measurements.get(closestBone.id)!;
-    measurement.all.push(closestBone.distance);
-    if (closestBone.t <= 0.35) measurement.start.push(closestBone.distance);
-    if (closestBone.t >= 0.65) measurement.end.push(closestBone.distance);
+    if (closest) samples.get(closest.bone.id)!.push({
+      t: closest.t,
+      distance: closest.distance,
+    });
   }
 
   const percentile = (values: number[], p: number): number => {
     if (values.length === 0) return 0;
     const sorted = [...values].sort((a, b) => a - b);
-    const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
-    return sorted[index];
+    const position = (sorted.length - 1) * Math.max(0, Math.min(1, p));
+    const lo = Math.floor(position);
+    const hi = Math.ceil(position);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (position - lo);
   };
 
   for (const bone of skeleton.bones) {
-    const measurement = measurements.get(bone.id)!;
-    const length = Math.max(8, Math.hypot(bone.end.x - bone.start.x, bone.end.y - bone.start.y));
-    const fallback = Math.min(80, Math.max(12, length * 0.22));
-    const middle = percentile(measurement.all, 0.65);
-    const startRadius = percentile(measurement.start, 0.65) || middle || fallback * 0.5;
-    const endRadius = percentile(measurement.end, 0.65) || middle || fallback * 0.5;
+    const data = samples.get(bone.id) ?? [];
+    const length = Math.max(8, Math.hypot(
+      bone.end.x - bone.start.x,
+      bone.end.y - bone.start.y
+    ));
+    const fallbackRadius = Math.max(6, Math.min(80, length * 0.22));
 
-    bone.startWidth = Math.max(12, Math.min(320, Math.round(startRadius * 2.2)));
-    bone.endWidth = Math.max(8, Math.min(320, Math.round(endRadius * 2.2)));
+    // Estimate cross-section independently at each end. Using the 75th
+    // percentile rejects sparse outliers while preserving broad artwork.
+    const startDistances = data
+      .filter((s) => s.t <= 0.35)
+      .map((s) => s.distance);
+    const endDistances = data
+      .filter((s) => s.t >= 0.65)
+      .map((s) => s.distance);
+    const allDistances = data.map((s) => s.distance);
+
+    const middle = percentile(allDistances, 0.65);
+    const startRadius = percentile(startDistances, 0.70) || middle || fallbackRadius;
+    const endRadius = percentile(endDistances, 0.70) || middle || fallbackRadius;
+
+    bone.startWidth = Math.max(12, Math.min(320, Math.round(startRadius * 2.15)));
+    bone.endWidth = Math.max(8, Math.min(320, Math.round(endRadius * 2.15)));
   }
 
-  // Keep connected envelopes continuous at joints.
+  // Preserve watertight envelopes at shared joints. This is geometry-only and
+  // never consults existing vertex weights.
   for (const parent of skeleton.bones) {
     const children = skeleton.bones.filter((child) => child.parentId === parent.id);
     if (children.length === 0) continue;
-    const childAverage = children.reduce((sum, child) => sum + (child.startWidth ?? 20), 0) / children.length;
+
+    const childAverage = children.reduce(
+      (sum, child) => sum + (child.startWidth ?? parent.endWidth ?? 20),
+      0
+    ) / children.length;
     const jointWidth = Math.round(((parent.endWidth ?? 20) + childAverage) * 0.5);
+
     parent.endWidth = jointWidth;
     for (const child of children) child.startWidth = jointWidth;
   }
 
-  if (skeleton.restBones) {
-    for (const bone of skeleton.bones) {
-      if (skeleton.restBones[bone.id]) {
-        skeleton.restBones[bone.id] = {
-          ...skeleton.restBones[bone.id],
-          startWidth: bone.startWidth,
-          endWidth: bone.endWidth,
-        };
-      }
+  for (const bone of skeleton.bones) {
+    const rest = skeleton.restBones?.[bone.id];
+    if (rest) {
+      rest.startWidth = bone.startWidth;
+      rest.endWidth = bone.endWidth;
     }
   }
 }
