@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useStudioStore, studioStore } from '../../store/studio';
 import { radToDeg, degToRad } from '../../lib/rig/math';
 import { VisualHierarchyTree } from './VisualHierarchyTree';
-import { WeightBrushPanel } from './WeightBrushPanel';
 import {
   FolderOpen,
   FolderDown,
@@ -31,7 +30,6 @@ import {
   PinOff,
   Undo2,
   Redo2,
-  Paintbrush,
   Copy,
 } from 'lucide-react';
 
@@ -51,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   const canUndo = useStudioStore((s) => s.canUndo);
   const canRedo = useStudioStore((s) => s.canRedo);
 
-  const [activeTab, setActiveTab] = useState<'bones' | 'weights' | 'animations' | 'export'>('bones');
+  const [activeTab, setActiveTab] = useState<'bones' | 'animations' | 'export'>('bones');
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const selectedBone = skeleton?.bones.find((b) => b.id === selectedBoneId) || null;
@@ -682,11 +680,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
               />
             </div>
           </>
-        )}
-
-        {/* TAB: WEIGHT BRUSH & SKINNING */}
-        {activeTab === 'weights' && (
-          <WeightBrushPanel />
         )}
 
         {/* TAB: ANIMATION PRESETS */}
