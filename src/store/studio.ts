@@ -826,7 +826,7 @@ class StudioStore {
     if (mode === 'rig') {
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      if (mesh) computeAutoWeights(mesh, skeleton);
+      this.refreshAutomaticSkinning();
       this.notify();
       return;
     }
@@ -846,7 +846,7 @@ class StudioStore {
     if (mode === 'rig') {
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      if (mesh) computeAutoWeights(mesh, skeleton);
+      this.refreshAutomaticSkinning();
       this.notify();
       return;
     }
@@ -866,13 +866,13 @@ class StudioStore {
     if (mode === 'rig') {
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      if (mesh) computeAutoWeights(mesh, skeleton);
+      this.refreshAutomaticSkinning();
       this.notify();
       return;
     }
 
     this.updateDeformedMesh();
-    if (mesh) computeAutoWeights(mesh, skeleton);
+    this.refreshAutomaticSkinning();
   }
 
   public setBoneName(boneId: string, name: string) {
@@ -1344,23 +1344,35 @@ class StudioStore {
     this.updateDeformedMesh();
   }
 
-  public recomputeWeights() {
-    const { mesh, skeleton } = this.state;
-    if (mesh && skeleton) {
-      optimizeBoneWidthsAndComputeWeights(mesh, skeleton);
-      if (this.state.restSkeleton) {
-        // Sync rest skeleton bone widths as well
-        for (const b of skeleton.bones) {
-          const rb = this.state.restSkeleton.bones.find((r) => r.id === b.id);
-          if (rb) {
-            rb.startWidth = b.startWidth;
-            rb.endWidth = b.endWidth;
-          }
-        }
+  /** Rebuild the canonical automatic skin from the unposed bind skeleton.
+   * Bone edits change the envelopes, so weights are refreshed automatically.
+   * Animation/pose changes never invoke this path.
+   */
+  private refreshAutomaticSkinning() {
+    const { mesh, skeleton, restSkeleton } = this.state;
+    if (!mesh || !skeleton) return;
+
+    const bindSkeleton = restSkeleton ?? skeleton;
+    updateWorldTransforms(bindSkeleton);
+    optimizeBoneWidthsAndComputeWeights(mesh, bindSkeleton);
+
+    // Keep active and bind envelopes identical after automatic inference.
+    for (const bone of skeleton.bones) {
+      const bindBone = bindSkeleton.bones.find((b) => b.id === bone.id);
+      if (bindBone) {
+        bone.startWidth = bindBone.startWidth;
+        bone.endWidth = bindBone.endWidth;
       }
-      this.updateDeformedMesh();
-      this.notify();
     }
+    if (restSkeleton && restSkeleton !== bindSkeleton) {
+      updateWorldTransforms(restSkeleton);
+    }
+
+    this.updateDeformedMesh();
+  }
+
+  public recomputeWeights() {
+    this.refreshAutomaticSkinning();
   }
 
   public reparentBone(boneId: string, newParentId: string | null): boolean {
