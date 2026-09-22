@@ -298,7 +298,7 @@ export function svgToDataUrl(svgString: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
 }
 
-export const DEFAULT_ARTWORK_URL = svgToDataUrl(createHumanSVG());
+// GRK's default model/reference artwork. The asset is kept as a real JPG so the studio starts from the supplied model rather than the procedural placeholder.\nexport const DEFAULT_ARTWORK_URL = 'https://raw.githubusercontent.com/jcltd303-hub/grk/main/833807321_1790067147864789.jpg';
 
 export const CHARACTER_PRESETS: CharacterPreset[] = [
   {
