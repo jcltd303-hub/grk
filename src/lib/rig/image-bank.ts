@@ -1,7 +1,7 @@
 import { CharacterPreset, PresetType } from './types';
 
 // Procedurally generate high-quality SVG characters to guarantee immediate offline availability and sharp resolution
-function createHumanSVG(): string {
+export function createHumanSVG(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 480" width="300" height="480">
     <defs>
       <linearGradient id="skin" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -294,9 +294,11 @@ function createFishSVG(): string {
   </svg>`;
 }
 
-function svgToDataUrl(svgString: string): string {
+export function svgToDataUrl(svgString: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
 }
+
+export const DEFAULT_ARTWORK_URL = svgToDataUrl(createHumanSVG());
 
 export const CHARACTER_PRESETS: CharacterPreset[] = [
   {

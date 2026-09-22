@@ -8,11 +8,23 @@ import {
   AnimationClip,
   Point2D,
   CharacterPreset,
+  RigExportJSON,
+  WeightBrushSettings,
+  WeightBrushMode,
 } from '../lib/rig/types';
-import { CHARACTER_PRESETS } from '../lib/rig/image-bank';
+import { CHARACTER_PRESETS, DEFAULT_ARTWORK_URL } from '../lib/rig/image-bank';
 import { createDefaultSkeleton, createEmptySkeleton, getDefaultAnimationClips } from '../lib/rig/presets';
-import { generateMesh, computeAutoWeights, optimizeBoneWidthsAndComputeWeights } from '../lib/rig/mesh';
-import { updateWorldTransforms, cloneSkeleton, computeBoneDeltaTransforms, deformMesh, resetMeshToRest } from '../lib/rig/skeleton';
+import { getStarterRigJSON } from '../lib/rig/starter-rig';
+import { generateMesh, computeAutoWeights, optimizeBoneWidthsAndComputeWeights, applyWeightBrush } from '../lib/rig/mesh';
+import {
+  updateWorldTransforms,
+  cloneSkeleton,
+  computeBoneDeltaTransforms,
+  deformMesh,
+  resetMeshToRest,
+  reparentBone,
+  mirrorBone,
+} from '../lib/rig/skeleton';
 import { solveCCD2D } from '../lib/rig/ik';
 import { lerpAngle, normalizeAngle, degToRad } from '../lib/rig/math';
 import { extractAlphaMask } from '../lib/rig/bg-remove';
@@ -67,6 +79,9 @@ export interface StudioState {
   zoom: number;
   pan: Point2D;
 
+  // Weight Brush Settings
+  weightBrushSettings: WeightBrushSettings;
+
   // Animation Engine
   isPlaying: boolean;
   currentTime: number;
@@ -81,6 +96,9 @@ export interface StudioState {
   // Actions
   init: () => void;
   selectPreset: (presetId: string) => void;
+  loadStarterRig: () => Promise<boolean>;
+  exportRigJSON: (options?: { embedImage?: boolean; rigName?: string }) => RigExportJSON | null;
+  loadRigFromJSON: (jsonString: string) => Promise<{ success: boolean; error?: string; stats?: { bones: number; vertices: number; clips: number; name?: string } }>;
   loadCustomImage: (dataUrl: string, presetType?: PresetType) => void;
   setMode: (mode: StudioMode) => void;
   setTool: (tool: StudioTool) => void;
@@ -93,7 +111,7 @@ export interface StudioState {
   redo: () => void;
   saveHistory: () => void;
 
-  // Bone Transforms & Generation
+  // Bone Transforms, Hierarchy & Generation
   addBone: (
     parentId?: string | null,
     targetEndPos?: Point2D,
@@ -102,6 +120,8 @@ export interface StudioState {
   ) => Bone | null;
   deleteBone: (boneId?: string | null) => void;
   clearAllBones: () => void;
+  reparentBone: (boneId: string, newParentId: string | null) => boolean;
+  mirrorBone: (boneId: string) => Bone | null;
   selectPreviousBone: () => void;
   selectNextBone: () => void;
   selectParentBone: () => void;
@@ -120,6 +140,12 @@ export interface StudioState {
   applyIK: (effectorBoneId: string, targetPos: Point2D) => void;
   resetToRestPose: () => void;
   recomputeWeights: () => void;
+
+  // Weight Brush Operations
+  setWeightBrushSettings: (settings: Partial<WeightBrushSettings>) => void;
+  paintWeights: (worldPos: Point2D) => void;
+  smoothAllWeightsForBone: (boneId?: string) => void;
+
 
   // Animation Actions
   play: () => void;
@@ -168,6 +194,12 @@ class StudioStore {
       showWeights: false,
       zoom: 1.0,
       pan: { x: 0, y: 0 },
+      weightBrushSettings: {
+        radius: 45,
+        intensity: 0.35,
+        mode: 'add',
+        targetWeight: 1.0,
+      },
       isPlaying: false,
       currentTime: 0,
       playbackSpeed: 1.0,
@@ -178,6 +210,9 @@ class StudioStore {
 
       init: () => this.init(),
       selectPreset: (id) => this.selectPreset(id),
+      loadStarterRig: () => this.loadStarterRig(),
+      exportRigJSON: (opts) => this.exportRigJSON(opts),
+      loadRigFromJSON: (json) => this.loadRigFromJSON(json),
       loadCustomImage: (url, type) => this.loadCustomImage(url, type),
       setMode: (mode) => this.setMode(mode),
       setTool: (tool) => this.setTool(tool),
@@ -199,6 +234,8 @@ class StudioStore {
       addBone: (pId, endPos, startPos, opts) => this.addBone(pId, endPos, startPos, opts),
       deleteBone: (id) => this.deleteBone(id),
       clearAllBones: () => this.clearAllBones(),
+      reparentBone: (boneId, newParentId) => this.reparentBone(boneId, newParentId),
+      mirrorBone: (boneId) => this.mirrorBone(boneId),
       selectPreviousBone: () => this.selectPreviousBone(),
       selectNextBone: () => this.selectNextBone(),
       selectParentBone: () => this.selectParentBone(),
@@ -208,6 +245,9 @@ class StudioStore {
       applyIK: (effectorId, target) => this.applyIK(effectorId, target),
       resetToRestPose: () => this.resetToRestPose(),
       recomputeWeights: () => this.recomputeWeights(),
+      setWeightBrushSettings: (settings) => this.setWeightBrushSettings(settings),
+      paintWeights: (worldPos) => this.paintWeights(worldPos),
+      smoothAllWeightsForBone: (boneId) => this.smoothAllWeightsForBone(boneId),
       play: () => this.play(),
       pause: () => this.pause(),
       seek: (t) => this.seek(t),
@@ -322,23 +362,328 @@ class StudioStore {
   }
 
   public init() {
-    this.selectPreset('human');
+    this.loadStarterRig();
   }
 
-  public selectPreset(presetId: string) {
-    const preset = CHARACTER_PRESETS.find((p) => p.id === presetId) || CHARACTER_PRESETS[0];
-    this.loadCharacter(preset.imageUrl, preset.type, preset.id);
+  public selectPreset(_presetId: string) {
+    this.loadStarterRig();
   }
 
-  public loadCustomImage(dataUrl: string, presetType: PresetType = 'human') {
-    this.loadCharacter(dataUrl, presetType, 'custom');
+  public loadCustomImage(dataUrl: string, _presetType?: PresetType) {
+    this.loadArtworkImage(dataUrl);
   }
 
   /**
-   * Loads a character image without preloading bones.
-   * Immediately moves to 'rig' mode and sets 'add_bone' tool so user can build their skeleton cleanly.
+   * Loads the starter reference rig using the comprehensive Rig JSON engine.
    */
-  private loadCharacter(imgSrc: string, type: PresetType, presetId: string) {
+  public async loadStarterRig(): Promise<boolean> {
+    const starterJSON = getStarterRigJSON();
+    const result = await this.loadRigFromJSON(starterJSON);
+    return result.success;
+  }
+
+  /**
+   * Generates a comprehensive, self-contained RigExportJSON object representing
+   * the exact current skeleton, bone envelopes, skinning weights, mesh geometry,
+   * animation keyframes, and optionally embedded artwork data.
+   */
+  public exportRigJSON(options?: { embedImage?: boolean; rigName?: string }): RigExportJSON | null {
+    const { skeleton, clips, mesh, image } = this.state;
+    if (!skeleton) return null;
+
+    let imageDataUrl: string | undefined = undefined;
+    if (options?.embedImage !== false && image) {
+      if (image.src.startsWith('data:')) {
+        imageDataUrl = image.src;
+      } else {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = image.naturalWidth || image.width;
+          canvas.height = image.naturalHeight || image.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(image, 0, 0);
+            imageDataUrl = canvas.toDataURL('image/png');
+          }
+        } catch {
+          imageDataUrl = image.src;
+        }
+      }
+    }
+
+    const exportData: RigExportJSON = {
+      version: '2.0',
+      format: '2d-skeletal-rig-studio',
+      name: options?.rigName || '2D Rig',
+      exportedAt: new Date().toISOString(),
+      image: image
+        ? {
+            dataUrl: imageDataUrl,
+            width: image.naturalWidth || image.width,
+            height: image.naturalHeight || image.height,
+          }
+        : undefined,
+      skeleton: {
+        rootId: skeleton.rootId,
+        rootPos: { ...skeleton.rootPos },
+        restRootPos: { ...(skeleton.restRootPos || skeleton.rootPos) },
+        restBones: skeleton.restBones || {},
+        bones: skeleton.bones.map((b) => ({
+          id: b.id,
+          name: b.name,
+          parentId: b.parentId,
+          length: b.length,
+          localAngle: b.localAngle,
+          worldAngle: b.worldAngle,
+          color: b.color,
+          startWidth: b.startWidth ?? 26,
+          endWidth: b.endWidth ?? 18,
+          minAngle: b.minAngle,
+          maxAngle: b.maxAngle,
+          isPinned: !!b.isPinned,
+          isIKTarget: !!b.isIKTarget,
+        })),
+      },
+      mesh: mesh
+        ? {
+            width: mesh.width,
+            height: mesh.height,
+            density: mesh.density,
+            vertexCount: mesh.vertices.length,
+            triangleCount: mesh.triangles.length,
+            vertices: mesh.vertices.map((v) => ({
+              x: v.x,
+              y: v.y,
+              u: v.u,
+              v: v.v,
+              originalX: v.originalX,
+              originalY: v.originalY,
+              weights: v.weights.map((w) => ({ boneId: w.boneId, weight: w.weight })),
+            })),
+            triangles: mesh.triangles,
+          }
+        : undefined,
+      animations: clips.map((c) => ({
+        id: c.id,
+        name: c.name,
+        duration: c.duration,
+        fps: c.fps,
+        loop: c.loop,
+        keyframes: c.keyframes.map((k) => ({
+          id: k.id,
+          time: k.time,
+          boneRotations: { ...k.boneRotations },
+          rootOffset: k.rootOffset ? { ...k.rootOffset } : undefined,
+        })),
+      })),
+    };
+
+    return exportData;
+  }
+
+  /**
+   * Comprehensively loads a 2D skeletal rig from an exported JSON string.
+   * Restores embedded texture image, full bone hierarchy & envelopes,
+   * mesh skinning weights, and keyframe animations.
+   */
+  public async loadRigFromJSON(jsonString: string): Promise<{
+    success: boolean;
+    error?: string;
+    stats?: { bones: number; vertices: number; clips: number; name?: string };
+  }> {
+    try {
+      const data = JSON.parse(jsonString);
+      if (!data.skeleton || !Array.isArray(data.skeleton.bones) || data.skeleton.bones.length === 0) {
+        return {
+          success: false,
+          error: 'Rig JSON format error: Missing skeleton or bones array.',
+        };
+      }
+
+      // Determine artwork image source
+      let imageSrc = data.image?.dataUrl || data.imageDataUrl || data.imageSrc;
+      if (!imageSrc) {
+        if (this.state.image?.src) {
+          imageSrc = this.state.image.src;
+        } else {
+          imageSrc = DEFAULT_ARTWORK_URL;
+        }
+      }
+
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = imageSrc;
+
+        img.onload = () => {
+          const w = img.naturalWidth || img.width;
+          const h = img.naturalHeight || img.height;
+
+          // 1. Build Skeleton from JSON
+          const rootPos: Point2D = data.skeleton.rootPos || { x: w * 0.5, y: h * 0.5 };
+          const restRootPos: Point2D = data.skeleton.restRootPos || { ...rootPos };
+
+          const skeleton: Skeleton = {
+            rootId: data.skeleton.rootId || data.skeleton.bones[0]?.id || 'root',
+            rootPos: { ...rootPos },
+            restRootPos: { ...restRootPos },
+            restBones: data.skeleton.restBones || {},
+            bones: data.skeleton.bones.map((b: any, idx: number) => ({
+              id: b.id || `bone_${idx}`,
+              name: b.name || `Bone ${idx + 1}`,
+              parentId: b.parentId !== undefined ? b.parentId : null,
+              length: typeof b.length === 'number' ? b.length : 50,
+              localAngle: typeof b.localAngle === 'number' ? b.localAngle : 0,
+              color: b.color || '#38bdf8',
+              start: b.start || { x: 0, y: 0 },
+              end: b.end || { x: 0, y: 0 },
+              worldAngle: typeof b.worldAngle === 'number' ? b.worldAngle : 0,
+              startWidth: typeof b.startWidth === 'number' ? b.startWidth : 26,
+              endWidth: typeof b.endWidth === 'number' ? b.endWidth : 18,
+              minAngle: typeof b.minAngle === 'number' ? b.minAngle : undefined,
+              maxAngle: typeof b.maxAngle === 'number' ? b.maxAngle : undefined,
+              isPinned: !!b.isPinned,
+              isIKTarget: !!b.isIKTarget,
+            })),
+          };
+
+          updateWorldTransforms(skeleton);
+
+          // Populate restBones map if missing
+          if (Object.keys(skeleton.restBones).length === 0) {
+            for (const b of skeleton.bones) {
+              skeleton.restBones[b.id] = {
+                localAngle: b.localAngle,
+                length: b.length,
+              };
+            }
+          }
+
+          // 2. Build or Generate Mesh & Weights
+          const alphaMask = extractAlphaMask(img);
+          let mesh: RigMesh;
+
+          if (
+            data.mesh &&
+            Array.isArray(data.mesh.vertices) &&
+            data.mesh.vertices.length > 0 &&
+            Array.isArray(data.mesh.triangles) &&
+            data.mesh.triangles.length > 0
+          ) {
+            mesh = {
+              width: data.mesh.width || w,
+              height: data.mesh.height || h,
+              density: data.mesh.density || 24,
+              triangles: data.mesh.triangles,
+              vertices: data.mesh.vertices.map((v: any) => ({
+                x: v.x,
+                y: v.y,
+                u: v.u,
+                v: v.v,
+                originalX: typeof v.originalX === 'number' ? v.originalX : v.x,
+                originalY: typeof v.originalY === 'number' ? v.originalY : v.y,
+                weights: Array.isArray(v.weights)
+                  ? v.weights.map((w: any) => ({ boneId: w.boneId, weight: w.weight }))
+                  : [],
+              })),
+            };
+          } else {
+            // Generate regular triangular mesh & auto compute weights
+            mesh = generateMesh(w, h, 18, 26, alphaMask);
+            optimizeBoneWidthsAndComputeWeights(mesh, skeleton);
+          }
+
+          // 3. Create Rest Skeleton clone
+          const restSkeleton = cloneSkeleton(skeleton);
+
+          // 4. Restore Animation Clips
+          let clips: AnimationClip[] = [];
+          if (Array.isArray(data.animations) && data.animations.length > 0) {
+            clips = data.animations;
+          } else if (Array.isArray(data.clips) && data.clips.length > 0) {
+            clips = data.clips;
+          } else {
+            clips = [
+              {
+                id: 'clip_rest',
+                name: 'Rest Pose',
+                duration: 1.0,
+                fps: 30,
+                loop: true,
+                keyframes: [
+                  {
+                    id: 'kf_0',
+                    time: 0,
+                    boneRotations: skeleton.bones.reduce(
+                      (acc, b) => ({ ...acc, [b.id]: b.localAngle }),
+                      {}
+                    ),
+                  },
+                ],
+              },
+            ];
+          }
+
+          const activeClip = clips[0] || null;
+
+          this.undoStack = [];
+          this.redoStack = [];
+
+          this.setState({
+            activePresetId: '',
+            image: img,
+            imageLoaded: true,
+            alphaMask,
+            mesh,
+            skeleton,
+            restSkeleton,
+            mode: 'pose', // Immediately ready for testing and posing!
+            tool: 'select',
+            selectedBoneId: skeleton.bones[0]?.id || null,
+            clips,
+            activeClipId: activeClip ? activeClip.id : null,
+            currentTime: 0,
+            isPlaying: false,
+            canUndo: false,
+            canRedo: false,
+            pan: { x: -w / 2, y: -h / 2 },
+            zoom: Math.min(1.4, 520 / Math.max(w, h)),
+          });
+
+          this.updateDeformedMesh();
+
+          resolve({
+            success: true,
+            stats: {
+              bones: skeleton.bones.length,
+              vertices: mesh.vertices.length,
+              clips: clips.length,
+              name: data.name,
+            },
+          });
+        };
+
+        img.onerror = () => {
+          resolve({
+            success: false,
+            error: 'Failed to load texture image from data URL.',
+          });
+        };
+      });
+    } catch (err) {
+      console.error('Failed to parse rig JSON', err);
+      return {
+        success: false,
+        error: `JSON parse error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Loads an artwork image without preloading bones.
+   * Moves to 'rig' mode and sets 'add_bone' tool so user can draw bones.
+   */
+  private loadArtworkImage(imgSrc: string) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = imgSrc;
@@ -347,25 +692,19 @@ class StudioStore {
       const w = img.naturalWidth || img.width;
       const h = img.naturalHeight || img.height;
 
-      // Extract alpha mask for clean mesh generation
       const alphaMask = extractAlphaMask(img);
-
-      // Generate regular triangular mesh clipped to character outline
       const mesh = generateMesh(w, h, 18, 26, alphaMask);
-
-      // Per user directive: "Don't load skeleton with image. On img load move to rig mode."
       const skeleton = createEmptySkeleton(w, h);
       const restSkeleton = createEmptySkeleton(w, h);
 
-      // Default animation clips
-      const clips = getDefaultAnimationClips(type);
+      const clips = getDefaultAnimationClips('human');
       const activeClip = clips.length > 0 ? clips[0] : null;
 
       this.undoStack = [];
       this.redoStack = [];
 
       this.setState({
-        activePresetId: presetId,
+        activePresetId: '',
         image: img,
         imageLoaded: true,
         alphaMask,
@@ -381,7 +720,6 @@ class StudioStore {
         isPlaying: false,
         canUndo: false,
         canRedo: false,
-        // Center pan
         pan: { x: -w / 2, y: -h / 2 },
         zoom: Math.min(1.4, 520 / Math.max(w, h)),
       });
@@ -397,8 +735,8 @@ class StudioStore {
     }
 
     if (skeleton && mesh) {
-      // In RIG MODE, the character NEVER bends or distorts: keep mesh in pristine rest pose!
-      if (mode === 'rig') {
+      // In RIG or WEIGHTS mode, keep mesh in rest pose for clean editing & painting!
+      if (mode === 'rig' || mode === 'weights') {
         resetMeshToRest(mesh);
         this.state.restSkeleton = cloneSkeleton(skeleton);
       } else {
@@ -416,8 +754,8 @@ class StudioStore {
   }
 
   public setMode(mode: StudioMode) {
-    if (mode === 'rig') {
-      // Switching into Rig mode: unbend character completely back to rest pose
+    if (mode === 'rig' || mode === 'weights') {
+      // Switching into Rig or Weights mode: unbend character completely back to rest pose
       const { skeleton, restSkeleton, mesh } = this.state;
       if (skeleton && restSkeleton) {
         for (const bone of skeleton.bones) {
@@ -432,7 +770,10 @@ class StudioStore {
       if (mesh) {
         resetMeshToRest(mesh);
       }
-      if (this.state.tool === 'ik') {
+      if (mode === 'weights') {
+        this.state.showWeights = true;
+        this.state.tool = 'weight_brush';
+      } else if (this.state.tool === 'ik' || this.state.tool === 'weight_brush') {
         this.state.tool = 'select';
       }
     } else if (mode === 'pose' || mode === 'animate') {
@@ -441,7 +782,7 @@ class StudioStore {
       const { skeleton, mesh } = this.state;
       if (skeleton && skeleton.bones.length > 0) {
         this.state.restSkeleton = cloneSkeleton(skeleton);
-        if (mesh) {
+        if (mesh && !mesh.vertices.some((v) => v.weights.length > 0)) {
           computeAutoWeights(mesh, skeleton);
         }
       }
@@ -1009,6 +1350,113 @@ class StudioStore {
       this.notify();
     }
   }
+
+  public reparentBone(boneId: string, newParentId: string | null): boolean {
+    const { skeleton, restSkeleton } = this.state;
+    if (!skeleton) return false;
+    this.saveHistory();
+
+    const ok = reparentBone(skeleton, boneId, newParentId);
+    if (ok && restSkeleton) {
+      reparentBone(restSkeleton, boneId, newParentId);
+      // Sync rest angles
+      const bone = skeleton.bones.find((b) => b.id === boneId);
+      if (bone) {
+        skeleton.restBones[bone.id] = { localAngle: bone.localAngle, length: bone.length };
+        restSkeleton.restBones[bone.id] = { localAngle: bone.localAngle, length: bone.length };
+      }
+    }
+
+    this.updateDeformedMesh();
+    return ok;
+  }
+
+  public mirrorBone(boneId: string): Bone | null {
+    const { skeleton, restSkeleton, image, mesh } = this.state;
+    if (!skeleton) return null;
+    this.saveHistory();
+
+    const centerX = mesh ? mesh.width * 0.5 : image ? image.width * 0.5 : 250;
+    const newBone = mirrorBone(skeleton, boneId, centerX);
+
+    if (newBone && restSkeleton) {
+      const restCopy: Bone = {
+        ...newBone,
+        start: { ...newBone.start },
+        end: { ...newBone.end },
+      };
+      restSkeleton.bones.push(restCopy);
+      restSkeleton.restBones[newBone.id] = { localAngle: newBone.localAngle, length: newBone.length };
+      updateWorldTransforms(restSkeleton);
+    }
+
+    if (newBone) {
+      this.setSelectedBoneId(newBone.id);
+      if (mesh) computeAutoWeights(mesh, skeleton);
+      this.updateDeformedMesh();
+    }
+
+    return newBone;
+  }
+
+  public setWeightBrushSettings(settings: Partial<WeightBrushSettings>) {
+    this.setState({
+      weightBrushSettings: {
+        ...this.state.weightBrushSettings,
+        ...settings,
+      },
+    });
+  }
+
+  public paintWeights(worldPos: Point2D) {
+    const { mesh, skeleton, selectedBoneId, weightBrushSettings, mode } = this.state;
+    if (!mesh || !skeleton || !selectedBoneId) return;
+
+    const allBoneIds = skeleton.bones.map((b) => b.id);
+    const useRestCoords = mode === 'rig' || mode === 'weights';
+
+    const modified = applyWeightBrush(
+      mesh,
+      worldPos,
+      selectedBoneId,
+      allBoneIds,
+      weightBrushSettings,
+      useRestCoords
+    );
+
+    if (modified) {
+      this.updateDeformedMesh();
+      // Trigger shallow state update on mesh to notify React/Canvas listeners
+      this.setState({ mesh: { ...mesh } });
+    }
+  }
+
+  public smoothAllWeightsForBone(boneId?: string) {
+    const { mesh, skeleton, selectedBoneId } = this.state;
+    const targetBoneId = boneId || selectedBoneId;
+    if (!mesh || !skeleton || !targetBoneId) return;
+
+    this.saveHistory();
+    const allBoneIds = skeleton.bones.map((b) => b.id);
+
+    // Apply smoothing stamps across all vertices of target bone
+    for (const v of mesh.vertices) {
+      const wObj = v.weights.find((w) => w.boneId === targetBoneId);
+      if (wObj && wObj.weight > 0.05) {
+        applyWeightBrush(
+          mesh,
+          { x: v.originalX, y: v.originalY },
+          targetBoneId,
+          allBoneIds,
+          { radius: 60, intensity: 0.6, mode: 'smooth' },
+          true
+        );
+      }
+    }
+
+    this.updateDeformedMesh();
+  }
+
 
   public play() {
     this.setState({ isPlaying: true });

@@ -225,3 +225,120 @@ export function optimizeBoneWidthsAndComputeWeights(
   computeAutoWeights(mesh, skeleton, maxInfluencesPerVertex, power);
 }
 
+/**
+ * Normalizes all vertex weights so the sum of bone weights equals exactly 1.0.
+ */
+export function normalizeVertexWeights(vertex: Vertex, fallbackBoneId: string): void {
+  // Filter out microscopic weights
+  vertex.weights = vertex.weights.filter((w) => w.weight > 0.001);
+  const total = vertex.weights.reduce((sum, w) => sum + w.weight, 0);
+
+  if (total > 0.0001) {
+    for (const w of vertex.weights) {
+      w.weight /= total;
+    }
+  } else {
+    vertex.weights = [{ boneId: fallbackBoneId, weight: 1.0 }];
+  }
+}
+
+/**
+ * Applies a radial weight brush stamp to the mesh for a specific bone.
+ * Supports:
+ * - 'add': adds weight with falloff, re-normalizes
+ * - 'subtract': reduces weight, re-normalizes
+ * - 'set': blends towards targetWeight
+ * - 'smooth': laplacian average with neighboring connected mesh vertices
+ */
+export function applyWeightBrush(
+  mesh: RigMesh,
+  brushCenter: { x: number; y: number },
+  targetBoneId: string,
+  allBoneIds: string[],
+  settings: {
+    radius: number;
+    intensity: number;
+    mode: 'add' | 'subtract' | 'smooth' | 'set';
+    targetWeight?: number;
+  },
+  useRestCoords: boolean = true
+): boolean {
+  if (mesh.vertices.length === 0 || !targetBoneId) return false;
+
+  const { radius, intensity, mode, targetWeight = 1.0 } = settings;
+  const radiusSq = radius * radius;
+  const fallbackBoneId = allBoneIds[0] || targetBoneId;
+  let modified = false;
+
+  // Build vertex neighbor adjacency graph if smoothing
+  let adjacency: Map<number, number[]> | null = null;
+  if (mode === 'smooth') {
+    adjacency = new Map();
+    for (let i = 0; i < mesh.vertices.length; i++) adjacency.set(i, []);
+    for (const [a, b, c] of mesh.triangles) {
+      const na = adjacency.get(a)!;
+      const nb = adjacency.get(b)!;
+      const nc = adjacency.get(c)!;
+      if (!na.includes(b)) na.push(b);
+      if (!na.includes(c)) na.push(c);
+      if (!nb.includes(a)) nb.push(a);
+      if (!nb.includes(c)) nb.push(c);
+      if (!nc.includes(a)) nc.push(a);
+      if (!nc.includes(b)) nc.push(b);
+    }
+  }
+
+  // Pre-capture current weights for smooth mode so reads aren't distorted
+  const originalWeights = mesh.vertices.map((v) => {
+    const found = v.weights.find((w) => w.boneId === targetBoneId);
+    return found ? found.weight : 0;
+  });
+
+  for (let i = 0; i < mesh.vertices.length; i++) {
+    const v = mesh.vertices[i];
+    const px = useRestCoords ? v.originalX : v.x;
+    const py = useRestCoords ? v.originalY : v.y;
+
+    const dx = px - brushCenter.x;
+    const dy = py - brushCenter.y;
+    const distSq = dx * dx + dy * dy;
+
+    if (distSq > radiusSq) continue;
+
+    const dist = Math.sqrt(distSq);
+    // Smooth cosine bell falloff from center (1.0) to edge (0.0)
+    const factor = Math.cos((dist / radius) * (Math.PI * 0.5));
+    const step = factor * intensity;
+
+    let targetObj = v.weights.find((w) => w.boneId === targetBoneId);
+    if (!targetObj) {
+      targetObj = { boneId: targetBoneId, weight: 0 };
+      v.weights.push(targetObj);
+    }
+
+    if (mode === 'add') {
+      targetObj.weight = Math.min(1.0, targetObj.weight + step * 0.25);
+    } else if (mode === 'subtract') {
+      targetObj.weight = Math.max(0.0, targetObj.weight - step * 0.25);
+    } else if (mode === 'set') {
+      targetObj.weight = targetObj.weight + (targetWeight - targetObj.weight) * Math.min(1.0, step * 0.4);
+    } else if (mode === 'smooth' && adjacency) {
+      const neighbors = adjacency.get(i) || [];
+      if (neighbors.length > 0) {
+        let neighborSum = 0;
+        for (const nIdx of neighbors) {
+          neighborSum += originalWeights[nIdx];
+        }
+        const avg = neighborSum / neighbors.length;
+        targetObj.weight = targetObj.weight + (avg - targetObj.weight) * Math.min(1.0, step * 0.5);
+      }
+    }
+
+    normalizeVertexWeights(v, fallbackBoneId);
+    modified = true;
+  }
+
+  return modified;
+}
+
+

@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { useStudioStore, studioStore } from '../../store/studio';
 import { radToDeg, degToRad } from '../../lib/rig/math';
+import { VisualHierarchyTree } from './VisualHierarchyTree';
+import { WeightBrushPanel } from './WeightBrushPanel';
 import {
   FolderOpen,
+  FolderDown,
   Bone as BoneIcon,
   Play,
   Pause,
@@ -28,15 +31,17 @@ import {
   PinOff,
   Undo2,
   Redo2,
+  Paintbrush,
+  Copy,
 } from 'lucide-react';
 
 interface SidebarProps {
   onOpenUploadModal: () => void;
+  onOpenLoadModal?: () => void;
   onClose?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) => {
-  const activePresetId = useStudioStore((s) => s.activePresetId);
+export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadModal, onClose }) => {
   const skeleton = useStudioStore((s) => s.skeleton);
   const selectedBoneId = useStudioStore((s) => s.selectedBoneId);
   const mode = useStudioStore((s) => s.mode);
@@ -46,7 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
   const canUndo = useStudioStore((s) => s.canUndo);
   const canRedo = useStudioStore((s) => s.canRedo);
 
-  const [activeTab, setActiveTab] = useState<'bones' | 'animations' | 'export'>('bones');
+  const [activeTab, setActiveTab] = useState<'bones' | 'weights' | 'animations' | 'export'>('bones');
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const selectedBone = skeleton?.bones.find((b) => b.id === selectedBoneId) || null;
@@ -109,31 +114,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
 
   // Handle Export Rig & Animation JSON
   const handleExportJSON = () => {
-    const { skeleton, clips, mesh } = studioStore.getState();
-    if (!skeleton) return;
-
-    const data = {
-      version: '1.0',
-      type: '2d_skeletal_rig',
-      name: 'Character Rig',
-      skeleton: {
-        rootId: skeleton.rootId,
-        rootPos: skeleton.rootPos,
-        bones: skeleton.bones.map((b) => ({
-          id: b.id,
-          name: b.name,
-          parentId: b.parentId,
-          length: b.length,
-          localAngle: b.localAngle,
-          color: b.color,
-        })),
-      },
-      meshStats: {
-        vertexCount: mesh?.vertices.length || 0,
-        triangleCount: mesh?.triangles.length || 0,
-      },
-      animations: clips,
-    };
+    const data = studioStore.exportRigJSON({ embedImage: true, rigName: '2D Rig' });
+    if (!data) return;
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -143,7 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
     link.click();
     URL.revokeObjectURL(url);
 
-    setExportNotice('Exported Rig & Animations JSON!');
+    setExportNotice('Exported Comprehensive Rig JSON (Skeleton, Mesh & Animations)!');
     setTimeout(() => setExportNotice(null), 4000);
   };
 
@@ -168,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
 
       {/* Mode Switcher */}
       <div className="p-2 border-b border-slate-800 bg-slate-950/40">
-        <div className="grid grid-cols-3 gap-1 p-0.5 bg-slate-800/80 rounded-lg border border-slate-700/60">
+        <div className="grid grid-cols-4 gap-1 p-0.5 bg-slate-800/80 rounded-lg border border-slate-700/60">
           <button
             id="mode_btn_pose"
             onClick={() => studioStore.setMode('pose')}
@@ -189,7 +171,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            Rig Bones
+            Rig
+          </button>
+          <button
+            id="mode_btn_weights"
+            onClick={() => {
+              studioStore.setMode('weights');
+              setActiveTab('weights');
+            }}
+            className={`py-1 text-xs font-medium rounded-md transition text-center ${
+              mode === 'weights'
+                ? 'bg-sky-500 text-white shadow-xs'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Weights
           </button>
           <button
             id="mode_btn_animate"
@@ -216,7 +212,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
           }`}
         >
           <BoneIcon className="w-3.5 h-3.5" />
-          <span>Bones ({skeleton?.bones.length || 0})</span>
+          <span>Bones</span>
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('weights');
+            if (mode !== 'weights') studioStore.setMode('weights');
+          }}
+          className={`flex-1 py-2 font-medium flex items-center justify-center gap-1 border-b-2 transition ${
+            activeTab === 'weights'
+              ? 'border-sky-500 text-sky-400 bg-slate-800/30'
+              : 'border-transparent text-slate-400 hover:text-white'
+          }`}
+        >
+          <Paintbrush className="w-3.5 h-3.5" />
+          <span>Weights</span>
         </button>
 
         <button
@@ -228,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
           }`}
         >
           <Film className="w-3.5 h-3.5" />
-          <span>Presets ({clips.length})</span>
+          <span>Clips</span>
         </button>
 
         <button
@@ -664,87 +675,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
                   </button>
                 )}
               </div>
-              <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
-                {skeleton?.bones.map((bone) => {
-                  const isSelected = bone.id === selectedBoneId;
-                  const isRoot = !bone.parentId;
-                  return (
-                    <div
-                      key={bone.id}
-                      className={`group w-full px-2.5 py-1.5 rounded-xl text-xs flex items-center justify-between transition ${
-                        isSelected
-                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/50'
-                          : 'bg-slate-800/40 hover:bg-slate-800 text-slate-300 border border-transparent'
-                      }`}
-                    >
-                      <button
-                        onClick={() => studioStore.setSelectedBoneId(bone.id)}
-                        className="flex-1 text-left flex items-center gap-2 min-w-0"
-                      >
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: bone.color }}
-                        />
-                        <span className="font-medium truncate">
-                          {!isRoot && <span className="text-slate-500 mr-1">↳</span>}
-                          {bone.name}
-                        </span>
-                        {bone.isPinned && (
-                          <span className="text-[10px] text-amber-400 font-semibold shrink-0">📌</span>
-                        )}
-                      </button>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[9px] text-slate-500 font-mono hidden sm:inline">
-                          W:{Math.round(bone.startWidth ?? 24)}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          {Math.round(radToDeg(bone.localAngle))}°
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            studioStore.toggleBonePin(bone.id);
-                          }}
-                          title={bone.isPinned ? 'Unpin node' : 'Pin node (Immobile)'}
-                          className={`p-1 rounded transition ${
-                            bone.isPinned
-                              ? 'text-amber-400 hover:text-amber-300'
-                              : 'opacity-0 group-hover:opacity-100 text-slate-500 hover:text-amber-400'
-                          }`}
-                        >
-                          <Pin className={`w-3 h-3 ${bone.isPinned ? 'fill-amber-400' : ''}`} />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            studioStore.addBone(bone.id);
-                          }}
-                          title="Add branch from this bone"
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-sky-400 rounded transition"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            studioStore.deleteBone(bone.id);
-                          }}
-                          title="Delete this bone"
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-400 rounded transition"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <VisualHierarchyTree
+                skeleton={skeleton}
+                selectedBoneId={selectedBoneId}
+                onSelectBone={(boneId) => studioStore.setSelectedBoneId(boneId)}
+              />
             </div>
           </>
         )}
 
-        {/* TAB 2: ANIMATION PRESETS */}
+        {/* TAB: WEIGHT BRUSH & SKINNING */}
+        {activeTab === 'weights' && (
+          <WeightBrushPanel />
+        )}
+
+        {/* TAB: ANIMATION PRESETS */}
         {activeTab === 'animations' && (
           <div className="space-y-3">
             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -847,6 +792,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onClose }) 
               >
                 <Download className="w-3.5 h-3.5" />
                 Export Sprite Sheet (PNG)
+              </button>
+            </div>
+
+            <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white">
+                <FolderDown className="w-4 h-4 text-amber-400" />
+                <span>Load Rig (JSON)</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Import an articulated 2D skeletal rig from a JSON file or string with bones, envelopes, skinning weights, and animations.
+              </p>
+              <button
+                id="btn_sidebar_load_rig"
+                onClick={onOpenLoadModal}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white rounded-xl text-xs font-medium flex items-center justify-center gap-2 transition"
+              >
+                <FolderDown className="w-3.5 h-3.5 text-amber-400" />
+                Load Rig from JSON
               </button>
             </div>
 

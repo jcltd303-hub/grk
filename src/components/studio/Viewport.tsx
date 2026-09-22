@@ -28,6 +28,7 @@ import {
   Undo2,
   Redo2,
   Sliders,
+  Paintbrush,
 } from 'lucide-react';
 
 interface ViewportProps {
@@ -44,6 +45,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const skeleton = useStudioStore((s) => s.skeleton);
   const mode = useStudioStore((s) => s.mode);
   const tool = useStudioStore((s) => s.tool);
+  const weightBrushSettings = useStudioStore((s) => s.weightBrushSettings);
   const showTexture = useStudioStore((s) => s.showTexture);
   const showMesh = useStudioStore((s) => s.showMesh);
   const showBones = useStudioStore((s) => s.showBones);
@@ -62,7 +64,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
   const [dragAction, setDragAction] = useState<{
-    type: 'bone_rotate' | 'joint_move' | 'ik';
+    type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_weight';
     boneId: string;
     jointType?: 'start' | 'end';
     startAngle?: number;
@@ -202,6 +204,17 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             }
           }
 
+          // Weight brush HUD preview (when in weights mode or weight_brush tool)
+          let weightBrushPreview = null;
+          if ((mode === 'weights' || tool === 'weight_brush') && cursorWorldPosRef.current) {
+            weightBrushPreview = {
+              pos: cursorWorldPosRef.current,
+              radius: weightBrushSettings.radius,
+              intensity: weightBrushSettings.intensity,
+              mode: weightBrushSettings.mode,
+            };
+          }
+
           renderRigScene(ctx, image, mesh, skeleton, {
             mode,
             showTexture,
@@ -217,6 +230,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             pan,
             pendingBonePreview,
             branchOriginHint,
+            weightBrushPreview,
           });
         }
       }
@@ -244,6 +258,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     isPlaying,
     tool,
     selectedBone,
+    weightBrushSettings,
   ]);
 
   // Handle Resize
@@ -388,6 +403,26 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     if (e.button === 0) {
       const worldPos = screenToWorld(e.clientX, e.clientY);
 
+      // WEIGHT BRUSH PAINTING MODE
+      if (tool === 'weight_brush' || mode === 'weights') {
+        const { boneId } = findHoverTarget(worldPos);
+        // If clicked on another bone joint/body and holding Alt/Ctrl or bone found, allow switching active bone
+        if (e.altKey && boneId) {
+          studioStore.setSelectedBoneId(boneId);
+          return;
+        }
+        if (selectedBoneId) {
+          setDragAction({ type: 'paint_weight', boneId: selectedBoneId });
+          studioStore.paintWeights(worldPos);
+          return;
+        } else if (boneId) {
+          studioStore.setSelectedBoneId(boneId);
+          setDragAction({ type: 'paint_weight', boneId });
+          studioStore.paintWeights(worldPos);
+          return;
+        }
+      }
+
       // ADD BONE / DRAW MODE
       if (tool === 'add_bone') {
         handleAddBoneClick(worldPos);
@@ -447,7 +482,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     }
 
     if (dragAction) {
-      if (dragAction.type === 'ik') {
+      if (dragAction.type === 'paint_weight') {
+        studioStore.paintWeights(worldPos);
+      } else if (dragAction.type === 'ik') {
         studioStore.applyIK(dragAction.boneId, worldPos);
       } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
         studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, worldPos);
@@ -503,6 +540,15 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       const t = e.touches[0];
       const worldPos = screenToWorld(t.clientX, t.clientY);
       setCursorWorldPos(worldPos);
+
+      // Handle weight painting on touch
+      if (tool === 'weight_brush' || mode === 'weights') {
+        if (selectedBoneId) {
+          setDragAction({ type: 'paint_weight', boneId: selectedBoneId });
+          studioStore.paintWeights(worldPos);
+          return;
+        }
+      }
 
       // Handle add bone on touch
       if (tool === 'add_bone') {
@@ -576,7 +622,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       }
 
       if (dragAction) {
-        if (dragAction.type === 'ik') {
+        if (dragAction.type === 'paint_weight') {
+          studioStore.paintWeights(worldPos);
+        } else if (dragAction.type === 'ik') {
           studioStore.applyIK(dragAction.boneId, worldPos);
         } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
           studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, worldPos);
@@ -599,6 +647,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const isAddBoneMode = tool === 'add_bone';
+  const isWeightBrushMode = tool === 'weight_brush' || mode === 'weights';
   const hasBones = skeleton && skeleton.bones.length > 0;
 
   return (
@@ -629,7 +678,15 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         onWheel={handleWheel}
         onContextMenu={(e) => e.preventDefault()}
         className={`absolute inset-0 touch-none ${
-          isAddBoneMode ? 'cursor-crosshair' : dragAction ? 'cursor-grabbing' : 'cursor-default'
+          isWeightBrushMode
+            ? dragAction?.type === 'paint_weight'
+              ? 'cursor-crosshair'
+              : 'cursor-crosshair'
+            : isAddBoneMode
+            ? 'cursor-crosshair'
+            : dragAction
+            ? 'cursor-grabbing'
+            : 'cursor-default'
         }`}
       />
 
@@ -782,6 +839,42 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
               setPendingBranchJoint(null);
             }}
             className="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white font-medium rounded-xl text-xs flex items-center gap-1.5 shrink-0 shadow-md shadow-sky-500/25 transition"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Done</span>
+          </button>
+        </div>
+      )}
+
+      {/* WEIGHT PAINTING INTERACTIVE INSTRUCTION CARD */}
+      {isWeightBrushMode && !isAddBoneMode && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-emerald-500/40 backdrop-blur-md rounded-2xl px-4 py-2.5 shadow-2xl z-30 flex items-center gap-3 text-xs max-w-lg w-[92%] sm:w-auto">
+          <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+            <Paintbrush className="w-4 h-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-white truncate flex items-center gap-1.5">
+              <span>Painting:</span>
+              {selectedBone ? (
+                <span className="text-emerald-300 font-bold">{selectedBone.name}</span>
+              ) : (
+                <span className="text-amber-400">Select a bone to paint weights</span>
+              )}
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase font-mono ml-1">
+                {weightBrushSettings.mode} (R:{weightBrushSettings.radius}px)
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 truncate">
+              Click & drag across mesh vertices to sculpt bone influence heatmap.
+            </div>
+          </div>
+          <button
+            id="btn_done_painting_weights"
+            onClick={() => {
+              studioStore.setTool('select');
+              studioStore.setMode('pose');
+            }}
+            className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-xl text-xs flex items-center gap-1.5 shrink-0 shadow-md shadow-emerald-500/25 transition"
           >
             <Check className="w-3.5 h-3.5" />
             <span>Done</span>
@@ -1101,6 +1194,28 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           >
             <Zap className="w-3 h-3" />
             <span className="hidden sm:inline">IK</span>
+          </button>
+
+          <button
+            id="btn_toggle_weight_brush"
+            onClick={() => {
+              if (tool === 'weight_brush') {
+                studioStore.setTool('select');
+              } else {
+                studioStore.setTool('weight_brush');
+                studioStore.setMode('weights');
+              }
+            }}
+            disabled={!hasBones}
+            title="Toggle Weight Paint Brush"
+            className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition shrink-0 ${
+              tool === 'weight_brush' || mode === 'weights'
+                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Paintbrush className="w-3 h-3" />
+            <span className="hidden sm:inline">Brush</span>
           </button>
         </div>
       </div>

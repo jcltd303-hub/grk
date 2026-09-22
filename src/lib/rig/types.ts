@@ -83,10 +83,70 @@ export type StudioTool = 'select' | 'bone_move' | 'bone_rotate' | 'ik' | 'add_bo
 
 export type StudioMode = 'rig' | 'pose' | 'animate' | 'weights';
 
+export type WeightBrushMode = 'add' | 'subtract' | 'smooth' | 'set';
+
+export interface WeightBrushSettings {
+  radius: number;
+  intensity: number;
+  mode: WeightBrushMode;
+  targetWeight: number; // used for 'set' mode (0 to 1)
+}
+
 export interface CharacterPreset {
   id: string;
   name: string;
   type: PresetType;
   description: string;
   imageUrl: string;
+}
+
+export interface RigExportJSON {
+  version: '2.0';
+  format: '2d-skeletal-rig-studio';
+  name: string;
+  exportedAt: string;
+  image?: {
+    dataUrl?: string;
+    width: number;
+    height: number;
+  };
+  skeleton: {
+    rootId: string;
+    rootPos: Point2D;
+    restRootPos: Point2D;
+    restBones?: Record<string, { localAngle: number; length: number; startWidth?: number; endWidth?: number }>;
+    bones: Array<{
+      id: string;
+      name: string;
+      parentId: string | null;
+      length: number;
+      localAngle: number;
+      worldAngle?: number;
+      color: string;
+      startWidth?: number;
+      endWidth?: number;
+      minAngle?: number;
+      maxAngle?: number;
+      isPinned?: boolean;
+      isIKTarget?: boolean;
+    }>;
+  };
+  mesh?: {
+    width: number;
+    height: number;
+    density?: number;
+    vertexCount: number;
+    triangleCount: number;
+    vertices: Array<{
+      x: number;
+      y: number;
+      u: number;
+      v: number;
+      originalX?: number;
+      originalY?: number;
+      weights: Array<{ boneId: string; weight: number }>;
+    }>;
+    triangles: Triangle[];
+  };
+  animations: AnimationClip[];
 }

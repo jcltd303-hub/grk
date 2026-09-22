@@ -146,6 +146,130 @@ export function getBoneChainToRoot(skeleton: Skeleton, endBoneId: string): Bone[
 }
 
 /**
+ * Checks if candidateParentId is a descendant of boneId (to prevent cyclic parenting).
+ */
+export function isDescendantOf(skeleton: Skeleton, candidateParentId: string, boneId: string): boolean {
+  if (candidateParentId === boneId) return true;
+  const map = new Map<string, Bone>();
+  skeleton.bones.forEach((b) => map.set(b.id, b));
+
+  let curr = map.get(candidateParentId);
+  while (curr) {
+    if (curr.id === boneId) return true;
+    if (!curr.parentId) break;
+    curr = map.get(curr.parentId);
+  }
+  return false;
+}
+
+/**
+ * Reparents a bone to a new parent while preserving world orientation and position.
+ */
+export function reparentBone(skeleton: Skeleton, boneId: string, newParentId: string | null): boolean {
+  const bone = skeleton.bones.find((b) => b.id === boneId);
+  if (!bone) return false;
+  if (bone.parentId === newParentId) return false;
+
+  // Cannot parent to self or any descendant
+  if (newParentId && isDescendantOf(skeleton, newParentId, boneId)) {
+    return false;
+  }
+
+  const map = new Map<string, Bone>();
+  skeleton.bones.forEach((b) => map.set(b.id, b));
+
+  const currentWorldAngle = bone.worldAngle;
+
+  if (!newParentId) {
+    // Becoming a root bone: localAngle becomes worldAngle
+    bone.parentId = null;
+    bone.localAngle = currentWorldAngle;
+  } else {
+    const newParent = map.get(newParentId);
+    if (!newParent) return false;
+    bone.parentId = newParentId;
+    bone.localAngle = normalizeAngle(currentWorldAngle - newParent.worldAngle);
+  }
+
+  updateWorldTransforms(skeleton);
+  return true;
+}
+
+/**
+ * Mirrors a bone or branch across the character vertical midline (center X).
+ */
+export function mirrorBone(
+  skeleton: Skeleton,
+  boneId: string,
+  centerX: number
+): Bone | null {
+  const sourceBone = skeleton.bones.find((b) => b.id === boneId);
+  if (!sourceBone) return null;
+
+  // Mirrored local angle flips sign across Y-axis
+  // In world coords: newStart.x = 2*centerX - sourceBone.start.x
+  // newEnd.x = 2*centerX - sourceBone.end.x
+  const newStartX = 2 * centerX - sourceBone.start.x;
+  const newStartY = sourceBone.start.y;
+  const newEndX = 2 * centerX - sourceBone.end.x;
+  const newEndY = sourceBone.end.y;
+
+  const dx = newEndX - newStartX;
+  const dy = newEndY - newStartY;
+  const mirroredWorldAngle = Math.atan2(dy, dx);
+
+  // Generate mirrored name (swap Left/Right or L/R tags)
+  let mirroredName = sourceBone.name;
+  if (mirroredName.includes('_L')) mirroredName = mirroredName.replace('_L', '_R');
+  else if (mirroredName.includes('_R')) mirroredName = mirroredName.replace('_R', '_L');
+  else if (mirroredName.toLowerCase().includes('left')) mirroredName = mirroredName.replace(/left/i, 'Right');
+  else if (mirroredName.toLowerCase().includes('right')) mirroredName = mirroredName.replace(/right/i, 'Left');
+  else mirroredName = `${mirroredName}_Mirrored`;
+
+  // Find mirrored parent if parent exists
+  let newParentId = sourceBone.parentId;
+  if (sourceBone.parentId) {
+    const sourceParent = skeleton.bones.find((b) => b.id === sourceBone.parentId);
+    if (sourceParent) {
+      // Check if there is already a mirrored version of the parent
+      const mirroredParent = skeleton.bones.find(
+        (b) =>
+          b.id !== sourceParent.id &&
+          (b.name.replace(/_R|_L|Left|Right/i, '') === sourceParent.name.replace(/_R|_L|Left|Right/i, ''))
+      );
+      if (mirroredParent) newParentId = mirroredParent.id;
+    }
+  }
+
+  const parentBone = newParentId ? skeleton.bones.find((b) => b.id === newParentId) : null;
+  const mirroredLocalAngle = parentBone
+    ? normalizeAngle(mirroredWorldAngle - parentBone.worldAngle)
+    : mirroredWorldAngle;
+
+  const newBone: Bone = {
+    id: `bone_mir_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    name: mirroredName,
+    parentId: newParentId,
+    localAngle: mirroredLocalAngle,
+    length: sourceBone.length,
+    startWidth: sourceBone.startWidth,
+    endWidth: sourceBone.endWidth,
+    color: sourceBone.color,
+    start: { x: newStartX, y: newStartY },
+    end: { x: newEndX, y: newEndY },
+    worldAngle: mirroredWorldAngle,
+    isIKTarget: sourceBone.isIKTarget,
+    isPinned: sourceBone.isPinned,
+  };
+
+  skeleton.bones.push(newBone);
+  skeleton.restBones[newBone.id] = { localAngle: newBone.localAngle, length: newBone.length };
+  updateWorldTransforms(skeleton);
+
+  return newBone;
+}
+
+/**
  * Resets all mesh vertices to their original, undeformed rest positions.
  * Ensures the character artwork never bends or distorts while in Rig mode.
  */

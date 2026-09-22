@@ -28,6 +28,12 @@ export interface RenderOptions {
     pos: Point2D;
     name: string;
   } | null;
+  weightBrushPreview?: {
+    pos: Point2D;
+    radius: number;
+    intensity: number;
+    mode: 'add' | 'subtract' | 'smooth' | 'set';
+  } | null;
 }
 
 /**
@@ -86,6 +92,81 @@ export function renderRigScene(
   if (options.ikTargetPos && options.activeIKEffectorId) {
     drawIKTarget(ctx, options.ikTargetPos);
   }
+
+  // 6. Draw Interactive Weight Brush Ring & Falloff HUD
+  if (options.weightBrushPreview) {
+    drawWeightBrushHUD(ctx, options.weightBrushPreview);
+  }
+
+  ctx.restore();
+}
+
+function drawWeightBrushHUD(
+  ctx: CanvasRenderingContext2D,
+  preview: {
+    pos: Point2D;
+    radius: number;
+    intensity: number;
+    mode: 'add' | 'subtract' | 'smooth' | 'set';
+  }
+): void {
+  const { pos, radius, intensity, mode } = preview;
+  ctx.save();
+
+  // Mode color theme
+  let strokeColor = 'rgba(56, 189, 248, 0.85)'; // sky for add
+  let fillColor = 'rgba(56, 189, 248, 0.12)';
+  let tag = '+ ADD';
+
+  if (mode === 'subtract') {
+    strokeColor = 'rgba(244, 63, 94, 0.85)'; // rose
+    fillColor = 'rgba(244, 63, 94, 0.12)';
+    tag = '- SUB';
+  } else if (mode === 'smooth') {
+    strokeColor = 'rgba(168, 85, 247, 0.85)'; // purple
+    fillColor = 'rgba(168, 85, 247, 0.12)';
+    tag = '~ SMOOTH';
+  } else if (mode === 'set') {
+    strokeColor = 'rgba(245, 158, 11, 0.85)'; // amber
+    fillColor = 'rgba(245, 158, 11, 0.12)';
+    tag = '= SET';
+  }
+
+  // Outer radius boundary ring
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.stroke();
+
+  // Inner core radius (representing intensity falloff)
+  const innerRadius = radius * Math.max(0.15, Math.min(0.9, intensity));
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y, innerRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  ctx.stroke();
+
+  // Center crosshair
+  ctx.beginPath();
+  ctx.moveTo(pos.x - 5, pos.y);
+  ctx.lineTo(pos.x + 5, pos.y);
+  ctx.moveTo(pos.x, pos.y - 5);
+  ctx.lineTo(pos.x, pos.y + 5);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Mode label badge above brush
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = strokeColor;
+  ctx.fillText(tag, pos.x, pos.y - radius - 4);
 
   ctx.restore();
 }

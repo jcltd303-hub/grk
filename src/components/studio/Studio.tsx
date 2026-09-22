@@ -3,11 +3,13 @@ import { Sidebar } from './Sidebar';
 import { Viewport } from './Viewport';
 import { Timeline } from './Timeline';
 import { UploadScreen } from './UploadScreen';
+import { LoadRigModal } from './LoadRigModal';
 import { studioStore, useStudioStore } from '../../store/studio';
 import {
   Bone,
   HelpCircle,
   FolderOpen,
+  FolderDown,
   SlidersHorizontal,
   Undo2,
   Redo2,
@@ -21,13 +23,13 @@ import {
 
 export const Studio: React.FC = () => {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   // Default sidebar open on desktop
   const [isSidebarOpen, setIsSidebarOpen] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 1024 : true
   );
 
-  const activePresetId = useStudioStore((s) => s.activePresetId);
   const skeleton = useStudioStore((s) => s.skeleton);
   const mesh = useStudioStore((s) => s.mesh);
   const mode = useStudioStore((s) => s.mode);
@@ -132,7 +134,7 @@ export const Studio: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Actions: Inspector Toggle, Upload, Help */}
+        {/* Right Actions: Inspector Toggle, Load Rig, Upload, Help */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Toggle Sidebar Button */}
           <button
@@ -149,13 +151,24 @@ export const Studio: React.FC = () => {
             <span className="hidden sm:inline">Panel</span>
           </button>
 
+          {/* Load Rig Button */}
+          <button
+            id="btn_header_load_rig"
+            onClick={() => setIsLoadModalOpen(true)}
+            className="px-2 sm:px-2.5 py-1 sm:py-1.5 bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-xs"
+            title="Load Existing Rig to Test / Play"
+          >
+            <FolderDown className="w-3.5 h-3.5 text-sky-400" />
+            <span>Load Rig</span>
+          </button>
+
           <button
             id="btn_header_upload"
             onClick={() => setIsUploadOpen(true)}
             className="px-2 sm:px-2.5 py-1 sm:py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-200 rounded-lg text-xs font-medium flex items-center gap-1 transition border border-slate-700/60"
-            title="Upload Custom Character"
+            title="Upload Artwork"
           >
-            <FolderOpen className="w-3.5 h-3.5 text-sky-400" />
+            <FolderOpen className="w-3.5 h-3.5 text-slate-400" />
             <span className="hidden md:inline">Upload</span>
           </button>
 
@@ -172,6 +185,16 @@ export const Studio: React.FC = () => {
       {/* Secondary Tools Header Bar (Collapsed Tools Menu) */}
       <div className="h-9 bg-slate-900/90 border-b border-slate-800/80 flex items-center justify-between px-3 shrink-0 z-10 text-xs overflow-x-auto custom-scrollbar gap-2">
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            id="btn_toolbar_load_rig"
+            onClick={() => setIsLoadModalOpen(true)}
+            className="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-300 rounded-lg font-medium flex items-center gap-1 transition text-[11px]"
+            title="Load Rig from JSON to Test/Play"
+          >
+            <FolderDown className="w-3 h-3 text-sky-400" />
+            <span>Load Rig</span>
+          </button>
+
           <button
             id="btn_header_draw"
             onClick={() => {
@@ -245,6 +268,7 @@ export const Studio: React.FC = () => {
           {isSidebarOpen && (
             <Sidebar
               onOpenUploadModal={() => setIsUploadOpen(true)}
+              onOpenLoadModal={() => setIsLoadModalOpen(true)}
               onClose={() => setIsSidebarOpen(false)}
             />
           )}
@@ -263,6 +287,10 @@ export const Studio: React.FC = () => {
               <Sidebar
                 onOpenUploadModal={() => {
                   setIsUploadOpen(true);
+                  setIsSidebarOpen(false);
+                }}
+                onOpenLoadModal={() => {
+                  setIsLoadModalOpen(true);
                   setIsSidebarOpen(false);
                 }}
                 onClose={() => setIsSidebarOpen(false)}
@@ -342,6 +370,12 @@ export const Studio: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Load Existing Rig Modal */}
+      <LoadRigModal
+        isOpen={isLoadModalOpen}
+        onClose={() => setIsLoadModalOpen(false)}
+      />
     </div>
   );
 };
