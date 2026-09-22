@@ -15,7 +15,7 @@ import {
 import { CHARACTER_PRESETS, DEFAULT_ARTWORK_URL } from '../lib/rig/image-bank';
 import { createDefaultSkeleton, createEmptySkeleton, getDefaultAnimationClips } from '../lib/rig/presets';
 import { getStarterRigJSON } from '../lib/rig/starter-rig';
-import { generateMesh, computeAutoWeights, optimizeBoneWidthsAndComputeWeights, applyWeightBrush } from '../lib/rig/mesh';
+import { generateMesh, computeAutoWeights, optimizeBoneWidthsAndComputeWeights, inferBoneWidthsFromMeshGeometry, applyWeightBrush } from '../lib/rig/mesh';
 import {
   updateWorldTransforms,
   cloneSkeleton,
@@ -590,8 +590,14 @@ class StudioStore {
           } else {
             // Generate regular triangular mesh & auto compute weights
             mesh = generateMesh(w, h, 18, 26, alphaMask);
-            optimizeBoneWidthsAndComputeWeights(mesh, skeleton);
+            inferBoneWidthsFromMeshGeometry(mesh, skeleton);
+            computeAutoWeights(mesh, skeleton);
           }
+
+          // Always rebuild automatic envelopes and weights from the current artwork.
+          // Imported/manual weights are not treated as the source of truth.
+          inferBoneWidthsFromMeshGeometry(mesh, skeleton);
+          computeAutoWeights(mesh, skeleton);
 
           // 3. Create Rest Skeleton clone
           const restSkeleton = cloneSkeleton(skeleton);
@@ -1060,7 +1066,10 @@ class StudioStore {
       });
 
       this.updateDeformedMesh();
-      if (mesh) computeAutoWeights(mesh, newSkeleton);
+      if (mesh) {
+        inferBoneWidthsFromMeshGeometry(mesh, newSkeleton);
+        computeAutoWeights(mesh, newSkeleton);
+      }
       return masterBone;
     }
 
@@ -1158,7 +1167,10 @@ class StudioStore {
     });
 
     this.updateDeformedMesh();
-    if (mesh) computeAutoWeights(mesh, skeleton);
+    if (mesh) {
+      inferBoneWidthsFromMeshGeometry(mesh, skeleton);
+      computeAutoWeights(mesh, skeleton);
+    }
     return newBone;
   }
 
