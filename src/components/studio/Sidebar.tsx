@@ -47,7 +47,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   const activeClipId = useStudioStore((s) => s.activeClipId);
   const isPlaying = useStudioStore((s) => s.isPlaying);
   const canUndo = useStudioStore((s) => s.canUndo);
-  const canRedo = useStudioStore((s) => s.canRedo);\n  const meshAvailable = useStudioStore((s) => !!s.mesh);
+  const canRedo = useStudioStore((s) => s.canRedo);
+  const meshAvailable = useStudioStore((s) => !!s.mesh);
 
   const [activeTab, setActiveTab] = useState<'bones' | 'animations' | 'export'>('bones');
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -170,20 +171,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
             }`}
           >
             Rig
-          </button>
-          <button
-            id="mode_btn_weights"
-            onClick={() => {
-              studioStore.setMode('weights');
-              setActiveTab('weights');
-            }}
-            className={`py-1 text-xs font-medium rounded-md transition text-center ${
-              mode === 'weights'
-                ? 'bg-sky-500 text-white shadow-xs'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Weights
           </button>
           <button
             id="mode_btn_animate"
