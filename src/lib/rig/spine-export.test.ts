@@ -44,6 +44,35 @@ test('exports rest pose with parent-first bones, weighted mesh and relative anim
   assert.match(createSpineAtlas(100, 100), /artwork.png[\s\S]*artwork\nbounds: 0,0,100,100/);
 });
 
+test('exports the edited bind skeleton rather than stale rest snapshots', () => {
+  const edited: Skeleton = {
+    ...skeleton, rootPos: { x: 60, y: 40 },
+    bones: skeleton.bones.map(b => b.id === 'root' ? { ...b, localAngle: Math.PI / 4, length: 30 } : b),
+  };
+  const output = createSpineSkeleton({ skeleton, bindSkeleton: edited, mesh, clips: [], width: 100, height: 100 });
+  assert.equal(output.bones[0].x, 10);
+  assert.ok('y' in output.bones[0]);
+  assert.equal(output.bones[0].y, 10);
+  assert.equal(output.bones[0].rotation, -45);
+  assert.equal(output.bones[0].length, 30);
+  assert.equal(output.bones[1].x, 30);
+});
+
+test('weighted vertex uses inverse bone rotation and reconstructs its image position', () => {
+  const turned: Skeleton = {
+    ...skeleton, rootPos: { x: 50, y: 50 },
+    bones: [{ ...skeleton.bones[1], localAngle: Math.PI / 2, length: 20 }],
+  };
+  const single: RigMesh = { ...mesh, vertices: mesh.vertices.map(v => ({ ...v, weights: [{ boneId: 'root', weight: 1 }] })) };
+  const output = createSpineSkeleton({ skeleton: turned, bindSkeleton: turned, mesh: single, clips: [], width: 100, height: 100 });
+  const attachment = output.skins[0].attachments.artwork.artwork;
+  // Vertex (70,50) is 20 right of the root. Its Spine local offset is (0,20)
+  // because the root rotates clockwise in Spine coordinates.
+  const vertex = attachment.vertices.slice(5, 10);
+  assert.ok(Math.abs(vertex[2]) < 1e-8);
+  assert.ok(Math.abs(vertex[3] - 20) < 1e-8);
+});
+
 test('rejects invalid hierarchy and mesh indexes', () => {
   assert.throws(() => createSpineSkeleton({
     skeleton: { ...skeleton, bones: skeleton.bones.map(b => ({ ...b, parentId: b.id === 'root' ? 'arm' : 'root' })) },

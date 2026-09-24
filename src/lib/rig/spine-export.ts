@@ -4,6 +4,7 @@ export const SPINE_VERSION = '4.2.43';
 
 type ExportInput = {
   skeleton: Skeleton;
+  bindSkeleton?: Skeleton;
   mesh: RigMesh;
   clips: AnimationClip[];
   width: number;
@@ -21,15 +22,16 @@ const finite = (value: number, label: string) => {
  * Y-up setup pose. Bone transforms are reconstructed from rest data so the
  * current animation pose never leaks into the exported bind pose.
  */
-export function createSpineSkeleton({ skeleton, mesh, clips, width, height }: ExportInput) {
+export function createSpineSkeleton({ skeleton, bindSkeleton, mesh, clips, width, height }: ExportInput) {
+  const bind = bindSkeleton ?? skeleton;
   if (!width || !height || !mesh.vertices.length || !mesh.triangles.length) {
     throw new Error('Spine export requires artwork and a nonempty weighted mesh.');
   }
-  if (!skeleton.bones.length) throw new Error('Spine export requires bones.');
+  if (!bind.bones.length) throw new Error('Spine export requires bones.');
   if (mesh.vertices.length > 65535) throw new Error('Spine mesh exceeds 65535 vertices.');
-  const byId = new Map(skeleton.bones.map(b => [b.id, b]));
-  if (byId.size !== skeleton.bones.length) throw new Error('Duplicate bone IDs.');
-  const ordered: typeof skeleton.bones = [];
+  const byId = new Map(bind.bones.map(b => [b.id, b]));
+  if (byId.size !== bind.bones.length) throw new Error('Duplicate bone IDs.');
+  const ordered: typeof bind.bones = [];
   const pending = new Set<string>();
   const seen = new Set<string>();
   function visit(id: string) {
@@ -43,7 +45,7 @@ export function createSpineSkeleton({ skeleton, mesh, clips, width, height }: Ex
     seen.add(id);
     ordered.push(bone);
   }
-  skeleton.bones.forEach(b => visit(b.id));
+  bind.bones.forEach(b => visit(b.id));
   const nameById = new Map<string, string>();
   const used = new Set<string>();
   ordered.forEach((bone, index) => {
@@ -52,26 +54,26 @@ export function createSpineSkeleton({ skeleton, mesh, clips, width, height }: Ex
     used.add(name);
     nameById.set(bone.id, name);
   });
-  const origin = skeleton.restRootPos || skeleton.rootPos;
+  const origin = bindSkeleton ? bind.rootPos : (skeleton.restRootPos || skeleton.rootPos);
   const transforms = new Map<string, { x: number; y: number; angle: number }>();
   const bones = ordered.map(bone => {
-    const rest = skeleton.restBones?.[bone.id];
+    const rest = bindSkeleton ? undefined : skeleton.restBones?.[bone.id];
     const angle = finite(rest?.localAngle ?? bone.localAngle, 'bone angle');
     const length = finite(rest?.length ?? bone.length, 'bone length');
     const parent = bone.parentId ? transforms.get(bone.parentId) : undefined;
     const worldAngle = (parent?.angle ?? 0) - angle;
     const x = parent ? parent.x + Math.cos(parent.angle) * finite(
-      skeleton.restBones?.[bone.parentId!]?.length ?? byId.get(bone.parentId!)!.length,
+      (bindSkeleton ? undefined : skeleton.restBones?.[bone.parentId!]?.length) ?? byId.get(bone.parentId!)!.length,
       'parent length',
     ) : origin.x - width / 2;
     const y = parent ? parent.y + Math.sin(parent.angle) * (
-      skeleton.restBones?.[bone.parentId!]?.length ?? byId.get(bone.parentId!)!.length
+      (bindSkeleton ? undefined : skeleton.restBones?.[bone.parentId!]?.length) ?? byId.get(bone.parentId!)!.length
     ) : height / 2 - origin.y;
     transforms.set(bone.id, { x, y, angle: worldAngle });
     return {
       name: nameById.get(bone.id)!,
       ...(parent ? { parent: nameById.get(bone.parentId!)!, x:
-        (skeleton.restBones?.[bone.parentId!]?.length ?? byId.get(bone.parentId!)!.length) } : { x, y }),
+        ((bindSkeleton ? undefined : skeleton.restBones?.[bone.parentId!]?.length) ?? byId.get(bone.parentId!)!.length) } : { x, y }),
       length,
       rotation: degrees(angle),
     };
@@ -113,8 +115,8 @@ export function createSpineSkeleton({ skeleton, mesh, clips, width, height }: Ex
       const px = finite(vertex.originalX, 'vertex X') - width / 2 - t.x;
       const py = height / 2 - finite(vertex.originalY, 'vertex Y') - t.y;
       const cosine = Math.cos(t.angle), sine = Math.sin(t.angle);
-      vertices.push(indexById.get(boneId)!, cosine * px - sine * py,
-        sine * px + cosine * py, finite(weight / total, 'weight'));
+      vertices.push(indexById.get(boneId)!, cosine * px + sine * py,
+        -sine * px + cosine * py, finite(weight / total, 'weight'));
     });
   });
   const triangles = mesh.triangles.flatMap(([a, b, c]) => {
@@ -132,7 +134,7 @@ export function createSpineSkeleton({ skeleton, mesh, clips, width, height }: Ex
     animationNames.add(name);
     const timelines: Record<string, { rotate?: { time: number; value: number }[] }> = {};
     ordered.forEach(bone => {
-      const setup = skeleton.restBones?.[bone.id]?.localAngle ?? bone.localAngle;
+      const setup = (bindSkeleton ? undefined : skeleton.restBones?.[bone.id]?.localAngle) ?? bone.localAngle;
       const keys = [...clip.keyframes]
         .sort((a, b) => a.time - b.time)
         .filter(key => Object.hasOwn(key.boneRotations, bone.id))

@@ -129,13 +129,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   };
 
   const handleExportSpine = async () => {
-    const { skeleton, mesh, clips, image } = studioStore.getState();
+    const { skeleton, restSkeleton, mesh, clips, image } = studioStore.getState();
     if (!skeleton || !mesh || !image) {
       setExportNotice('Add artwork, bones, and a mesh before exporting.');
       return;
     }
     try {
-      const file = await createSpinePackage({ skeleton, mesh, clips, image });
+      const file = await createSpinePackage({ skeleton, bindSkeleton: restSkeleton ?? skeleton, mesh, clips, image });
       const url = URL.createObjectURL(file);
       const link = document.createElement('a');
       link.download = 'spine-rig.zip';

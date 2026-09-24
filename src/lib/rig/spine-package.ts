@@ -49,6 +49,7 @@ export function zipFiles(files: { name: string; data: Uint8Array }[]): Blob {
 
 export async function createSpinePackage(input: {
   skeleton: Skeleton;
+  bindSkeleton?: Skeleton;
   mesh: RigMesh;
   clips: AnimationClip[];
   image: HTMLImageElement;
