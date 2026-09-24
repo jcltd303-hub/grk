@@ -28,6 +28,7 @@ import {
 import { solveCCD2D } from '../lib/rig/ik';
 import { lerpAngle, normalizeAngle, degToRad } from '../lib/rig/math';
 import { extractAlphaMask } from '../lib/rig/bg-remove';
+import { convertSpineRig } from '../lib/rig/spine-import';
 
 const BONE_PALETTE = [
   '#38bdf8', // sky
@@ -494,7 +495,11 @@ class StudioStore {
     stats?: { bones: number; vertices: number; clips: number; name?: string };
   }> {
     try {
-      const data = JSON.parse(jsonString);
+      let data = JSON.parse(jsonString);
+      if (data?.skeleton?.spine) {
+        if (!data.image?.dataUrl) return { success: false, error: 'Load the full spine-rig.zip so its artwork is included.' };
+        data = convertSpineRig(data);
+      }
       if (!data.skeleton || !Array.isArray(data.skeleton.bones) || data.skeleton.bones.length === 0) {
         return {
           success: false,
@@ -599,7 +604,7 @@ class StudioStore {
           // Always rebuild automatic envelopes and weights from the current artwork.
           // Imported/manual weights are not treated as the source of truth.
           inferBoneWidthsFromMeshGeometry(mesh, skeleton);
-          computeAutoWeights(mesh, skeleton);
+          if (data.format !== 'spine-import') computeAutoWeights(mesh, skeleton);
 
           // 3. Create Rest Skeleton clone
           const restSkeleton = cloneSkeleton(skeleton);

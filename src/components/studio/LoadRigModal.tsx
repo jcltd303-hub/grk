@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { studioStore } from '../../store/studio';
+import { unzipSync } from 'fflate';
+import { convertSpineRig } from '../../lib/rig/spine-import';
 import {
   FolderDown,
   FileCode,
@@ -53,22 +55,27 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
 
     try {
       const parsed = JSON.parse(trimmed);
-      if (!parsed.skeleton || !Array.isArray(parsed.skeleton.bones) || parsed.skeleton.bones.length === 0) {
+      if (parsed?.skeleton?.spine && !parsed.image?.dataUrl) {
+        setJsonError('This is Spine rig.json. Select the full spine-rig.zip to include artwork.png.');
+        return;
+      }
+      const info = parsed?.skeleton?.spine ? convertSpineRig(parsed) : parsed;
+      if (!info.skeleton || !Array.isArray(info.skeleton.bones) || info.skeleton.bones.length === 0) {
         setJsonError('Rig format error: Missing "skeleton" or "skeleton.bones" array.');
         return;
       }
 
-      const hasEmbedded = !!(parsed.image?.dataUrl || parsed.imageDataUrl);
-      const clips = parsed.animations || parsed.clips || [];
+      const hasEmbedded = !!(info.image?.dataUrl || info.imageDataUrl);
+      const clips = info.animations || info.clips || [];
 
       setParsedInfo({
-        name: parsed.name || '2D Rig',
-        version: parsed.version || '1.0',
-        boneCount: parsed.skeleton.bones.length,
-        rootId: parsed.skeleton.rootId || parsed.skeleton.bones[0]?.id || 'root',
+        name: info.name || '2D Rig',
+        version: parsed.skeleton?.spine || info.version || '1.0',
+        boneCount: info.skeleton.bones.length,
+        rootId: info.skeleton.rootId || info.skeleton.bones[0]?.id || 'root',
         hasEmbeddedImage: hasEmbedded,
-        vertexCount: parsed.mesh?.vertices?.length,
-        triangleCount: parsed.mesh?.triangles?.length,
+        vertexCount: info.mesh?.vertices?.length,
+        triangleCount: info.mesh?.triangles?.length,
         clipsCount: Array.isArray(clips) ? clips.length : 0,
       });
     } catch (err) {
@@ -76,19 +83,36 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
     }
   };
 
+  const inspectFile = async (file: File) => {
+    try {
+      if (file.name.toLowerCase().endsWith('.zip')) {
+        const files = unzipSync(new Uint8Array(await file.arrayBuffer()));
+        const json = files['rig.json'], png = files['artwork.png'], atlas = files['rig.atlas'];
+        if (!json || !png || !atlas) throw new Error('Spine ZIP needs rig.json, rig.atlas, and artwork.png.');
+        const parsed = JSON.parse(new TextDecoder().decode(json));
+        if (!parsed?.skeleton?.spine) throw new Error('The ZIP does not contain a Spine rig.json.');
+        const imageDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('Could not read artwork.png.'));
+          reader.readAsDataURL(new Blob([new Uint8Array(png) as BlobPart], { type: 'image/png' }));
+        });
+        inspectAndSetJSON(JSON.stringify({ ...parsed, image: { dataUrl: imageDataUrl } }), file.name);
+      } else {
+        inspectAndSetJSON(await file.text(), file.name);
+      }
+    } catch (error) {
+      setJsonContent('');
+      setParsedInfo(null);
+      setJsonError(error instanceof Error ? error.message : 'Could not read rig file.');
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      inspectAndSetJSON(content, file.name);
-    };
-    reader.onerror = () => {
-      setJsonError('Failed to read selected file from disk.');
-    };
-    reader.readAsText(file);
+    void inspectFile(file);
   };
 
   const handleLoadStarterRig = async () => {
@@ -208,12 +232,7 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
                 e.preventDefault();
                 const file = e.dataTransfer.files?.[0];
                 if (file) {
-                  const reader = new FileReader();
-                  reader.onload = (ev) => {
-                    const content = ev.target?.result as string;
-                    inspectAndSetJSON(content, file.name);
-                  };
-                  reader.readAsText(file);
+                  void inspectFile(file);
                 }
               }}
               className="bg-slate-800/40 border border-dashed border-slate-700/80 hover:border-amber-500/60 rounded-xl p-6 text-center space-y-3 transition"
@@ -222,7 +241,7 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileChange}
-                accept=".json,application/json"
+                accept=".json,.zip,application/json,application/zip"
                 className="hidden"
               />
 
@@ -232,7 +251,7 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
 
               <div>
                 <p className="text-xs font-semibold text-white">
-                  Drop a Rig Definition JSON file here or browse
+                  Drop a Spine ZIP or Rig Definition JSON here
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   Restores complete bone hierarchy, envelope widths, vertex weights, and animation tracks.
@@ -345,7 +364,7 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/50 flex items-center justify-between text-xs text-slate-400">
-          <span>Supported: Comprehensive Rig JSON (v2.0 & v1.0).</span>
+          <span>Supported: Spine ZIP and Studio Rig JSON (v2.0 & v1.0).</span>
           <button
             onClick={onClose}
             className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition"
