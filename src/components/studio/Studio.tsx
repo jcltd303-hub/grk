@@ -36,6 +36,7 @@ export const Studio: React.FC = () => {
   const canUndo = useStudioStore((s) => s.canUndo);
   const canRedo = useStudioStore((s) => s.canRedo);
   const selectedBoneId = useStudioStore((s) => s.selectedBoneId);
+  const pendingSkeletonReview = useStudioStore((s) => s.pendingSkeletonReview);
 
   useEffect(() => {
     studioStore.init();
@@ -305,6 +306,20 @@ export const Studio: React.FC = () => {
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             isSidebarOpen={isSidebarOpen}
           />
+          {pendingSkeletonReview && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-[min(92vw,420px)] rounded-xl border border-sky-500/40 bg-slate-900 p-4 shadow-2xl text-center" role="dialog" aria-label="Review suggested skeleton">
+              <p className="text-sm font-semibold text-white">Keep this suggested skeleton?</p>
+              <p className="mt-1 text-xs text-slate-300">Check the bones over your artwork. You can edit them after keeping them.</p>
+              <div className="mt-3 flex gap-2 justify-center">
+                <button onClick={() => studioStore.scrapSuggestedSkeleton()} className="rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800">
+                  Scrap and draw my own
+                </button>
+                <button onClick={() => studioStore.keepSuggestedSkeleton()} className="rounded-lg bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-400">
+                  Keep skeleton
+                </button>
+              </div>
+            </div>
+          )}
         </main>
       </div>
 

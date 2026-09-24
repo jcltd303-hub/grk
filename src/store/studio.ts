@@ -13,9 +13,11 @@ import {
   WeightBrushMode,
 } from '../lib/rig/types';
 import { CHARACTER_PRESETS, DEFAULT_ARTWORK_URL } from '../lib/rig/image-bank';
-import { createDefaultSkeleton, createEmptySkeleton, getDefaultAnimationClips } from '../lib/rig/presets';
+import { getDefaultAnimationClips } from '../lib/rig/presets';
 import { getStarterRigJSON } from '../lib/rig/starter-rig';
-import { generateMesh, computeAutoWeights, optimizeBoneWidthsAndComputeWeights, inferBoneWidthsFromMeshGeometry, applyWeightBrush } from '../lib/rig/mesh';
+import { generateMesh, computeAutoWeights, inferBoneWidthsFromMeshGeometry, applyWeightBrush } from '../lib/rig/mesh';
+import { fitEnvelopesToAlpha } from '../lib/rig/envelope';
+import { autoRig } from '../lib/rig/auto-rig';
 import {
   updateWorldTransforms,
   cloneSkeleton,
@@ -62,6 +64,7 @@ export interface StudioState {
   skeleton: Skeleton | null;
   restSkeleton: Skeleton | null;
   mesh: RigMesh | null;
+  pendingSkeletonReview: boolean;
 
   // Editor State
   mode: StudioMode;
@@ -101,6 +104,8 @@ export interface StudioState {
   exportRigJSON: (options?: { embedImage?: boolean; rigName?: string }) => RigExportJSON | null;
   loadRigFromJSON: (jsonString: string) => Promise<{ success: boolean; error?: string; stats?: { bones: number; vertices: number; clips: number; name?: string } }>;
   loadCustomImage: (dataUrl: string, presetType?: PresetType) => void;
+  keepSuggestedSkeleton: () => void;
+  scrapSuggestedSkeleton: () => void;
   setMode: (mode: StudioMode) => void;
   setTool: (tool: StudioTool) => void;
   setSelectedBoneId: (id: string | null) => void;
@@ -182,6 +187,7 @@ class StudioStore {
       skeleton: null,
       restSkeleton: null,
       mesh: null,
+      pendingSkeletonReview: false,
       mode: 'rig',
       tool: 'add_bone',
       selectedBoneId: null,
@@ -215,6 +221,8 @@ class StudioStore {
       exportRigJSON: (opts) => this.exportRigJSON(opts),
       loadRigFromJSON: (json) => this.loadRigFromJSON(json),
       loadCustomImage: (url, type) => this.loadCustomImage(url, type),
+      keepSuggestedSkeleton: () => this.keepSuggestedSkeleton(),
+      scrapSuggestedSkeleton: () => this.scrapSuggestedSkeleton(),
       setMode: (mode) => this.setMode(mode),
       setTool: (tool) => this.setTool(tool),
       setSelectedBoneId: (id) => this.setSelectedBoneId(id),
@@ -374,6 +382,17 @@ class StudioStore {
 
   public loadCustomImage(dataUrl: string, _presetType?: PresetType) {
     this.loadArtworkImage(dataUrl);
+  }
+
+  public keepSuggestedSkeleton() {
+    if (!this.state.pendingSkeletonReview) return;
+    this.setState({ pendingSkeletonReview: false, tool: 'select' });
+  }
+
+  public scrapSuggestedSkeleton() {
+    if (!this.state.pendingSkeletonReview) return;
+    this.clearAllBones();
+    this.setState({ pendingSkeletonReview: false });
   }
 
   /**
@@ -604,6 +623,7 @@ class StudioStore {
           // Always rebuild automatic envelopes and weights from the current artwork.
           // Imported/manual weights are not treated as the source of truth.
           inferBoneWidthsFromMeshGeometry(mesh, skeleton);
+          fitEnvelopesToAlpha(skeleton, alphaMask, w, h);
           if (data.format !== 'spine-import') computeAutoWeights(mesh, skeleton);
 
           // 3. Create Rest Skeleton clone
@@ -650,6 +670,7 @@ class StudioStore {
             mesh,
             skeleton,
             restSkeleton,
+            pendingSkeletonReview: false,
             mode: 'pose', // Immediately ready for testing and posing!
             tool: 'select',
             selectedBoneId: skeleton.bones[0]?.id || null,
@@ -692,10 +713,7 @@ class StudioStore {
     }
   }
 
-  /**
-   * Loads an artwork image without preloading bones.
-   * Moves to 'rig' mode and sets 'add_bone' tool so user can draw bones.
-   */
+  /** Loads artwork with a provisional skeleton for review. */
   private loadArtworkImage(imgSrc: string) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -707,8 +725,7 @@ class StudioStore {
 
       const alphaMask = extractAlphaMask(img);
       const mesh = generateMesh(w, h, 18, 26, alphaMask);
-      const skeleton = createEmptySkeleton(w, h);
-      const restSkeleton = createEmptySkeleton(w, h);
+      const { skeleton, restSkeleton } = autoRig(mesh, w, h, alphaMask);
 
       const clips = getDefaultAnimationClips('human');
       const activeClip = clips.length > 0 ? clips[0] : null;
@@ -724,8 +741,10 @@ class StudioStore {
         mesh,
         skeleton,
         restSkeleton,
+        pendingSkeletonReview: true,
         mode: 'rig',
-        tool: 'add_bone',
+        tool: 'select',
+        showBones: true,
         selectedBoneId: null,
         clips,
         activeClipId: activeClip ? activeClip.id : null,
@@ -1345,12 +1364,14 @@ class StudioStore {
    * Animation/pose changes never invoke this path.
    */
   private refreshAutomaticSkinning() {
-    const { mesh, skeleton, restSkeleton } = this.state;
+    const { mesh, skeleton, restSkeleton, alphaMask } = this.state;
     if (!mesh || !skeleton) return;
 
     const bindSkeleton = restSkeleton ?? skeleton;
     updateWorldTransforms(bindSkeleton);
-    optimizeBoneWidthsAndComputeWeights(mesh, bindSkeleton);
+    inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
+    fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
+    computeAutoWeights(mesh, bindSkeleton);
 
     // Keep active and bind envelopes identical after automatic inference.
     for (const bone of skeleton.bones) {

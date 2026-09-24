@@ -2,6 +2,7 @@ import { Bone, Point2D, PresetType, RigMesh, Skeleton } from './types';
 import { normalizeAngle, distToSegment } from './math';
 import { updateWorldTransforms, cloneSkeleton } from './skeleton';
 import { computeAutoWeights } from './mesh';
+import { fitEnvelopesToAlpha } from './envelope';
 
 export interface SilhouetteInfo {
   minX: number;
@@ -995,6 +996,7 @@ export function autoRig(
 
   // Step 2: Automatic Bone Widths Setting
   calculateAutomaticBoneWidths(skeleton, mesh, alphaMask, imageWidth, imageHeight);
+  fitEnvelopesToAlpha(skeleton, alphaMask, imageWidth, imageHeight, true);
 
   // Step 3: Automatic Skinning Weights Setting
   computeAutoWeights(mesh, skeleton, 4, 2.6);
