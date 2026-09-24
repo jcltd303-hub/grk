@@ -33,7 +33,7 @@ export interface Skeleton {
   rootId: string;
   rootPos: Point2D;
   restRootPos: Point2D;
-  restBones: Record<string, { localAngle: number; length: number }>;
+  restBones: Record<string, { localAngle: number; length: number; startWidth?: number; endWidth?: number }>;
 }
 
 export interface VertexWeight {

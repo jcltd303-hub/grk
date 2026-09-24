@@ -128,6 +128,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
     setTimeout(() => setExportNotice(null), 4000);
   };
 
+  const handleExportSpine = async () => {
+    const { skeleton, mesh, clips, image } = studioStore.getState();
+    if (!skeleton || !mesh || !image) {
+      setExportNotice('Add artwork, bones, and a mesh before exporting.');
+      return;
+    }
+    try {
+      const file = await createSpinePackage({ skeleton, mesh, clips, image });
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.download = 'spine-rig.zip';
+      link.href = url;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setExportNotice('Exported Spine JSON, atlas, and PNG.');
+    } catch (error) {
+      setExportNotice(error instanceof Error ? error.message : 'Spine export failed.');
+    }
+  };
+
   return (
     <aside className="w-72 sm:w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col z-10 shrink-0 text-slate-200">
       {/* Panel Header with Close for Mobile */}
@@ -665,6 +685,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
 
             <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-3.5 space-y-2.5">
               <div className="flex items-center gap-2 text-xs font-semibold text-white">
+                <FolderDown className="w-4 h-4 text-violet-400" />
+                <span>Esoteric Spine 4.2</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Downloads a ZIP with rig.json, rig.atlas, and artwork.png for Spine runtimes.
+              </p>
+              <button
+                id="btn_export_spine"
+                onClick={handleExportSpine}
+                className="w-full py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl text-xs font-medium flex items-center justify-center gap-2"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export Spine Package
+              </button>
+            </div>
+
+            <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white">
                 <Layers className="w-4 h-4 text-sky-400" />
                 <span>Animated Sprite Sheet</span>
               </div>
@@ -722,3 +760,4 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
     </aside>
   );
 };
+import { createSpinePackage } from '../../lib/rig/spine-package';
