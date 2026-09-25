@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useStudioStore, studioStore } from '../../store/studio';
 import { renderRigScene } from '../../lib/rig/render-gl';
+import { snapAngle, snapPoint, type SnapResult } from '../../lib/rig/snap';
 import { Point2D } from '../../lib/rig/types';
 import { distance, angleBetween, normalizeAngle, distToSegment, radToDeg } from '../../lib/rig/math';
 import {
@@ -30,6 +31,7 @@ import {
   Sliders,
   Paintbrush,
   Scissors,
+  Magnet,
 } from 'lucide-react';
 
 interface ViewportProps {
@@ -43,6 +45,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   // Store selections
   const image = useStudioStore((s) => s.image);
   const mesh = useStudioStore((s) => s.mesh);
+  const alphaMask = useStudioStore((s) => s.alphaMask);
+  const snapEnabled = useStudioStore((s) => s.snapEnabled);
   const skeleton = useStudioStore((s) => s.skeleton);
   const mode = useStudioStore((s) => s.mode);
   const tool = useStudioStore((s) => s.tool);
@@ -64,6 +68,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
+  const [snapIndicator, setSnapIndicator] = useState<SnapResult | null>(null);
   const [cutStart, setCutStart] = useState<Point2D | null>(null);
   const [cutEnd, setCutEnd] = useState<Point2D | null>(null);
   const [cutLeftBone, setCutLeftBone] = useState('');
@@ -116,6 +121,15 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   });
 
   const selectedBone = skeleton?.bones.find((b) => b.id === selectedBoneId) || null;
+
+  const snapAt = (point: Point2D, anchor?: Point2D | null, excludeBoneId?: string | null): SnapResult =>
+    snapPoint(point, {
+      enabled: snapEnabled, zoom, skeleton, anchor, excludeBoneId,
+      alpha: mode === 'rig' ? alphaMask : null,
+      width: mesh?.width, height: mesh?.height,
+    });
+  const addBoneAnchor = (): Point2D | null => pendingMasterStart || pendingBranchJoint?.pos ||
+    selectedBone?.end || skeleton?.bones[skeleton.bones.length - 1]?.end || null;
 
   // Screen to World Transform
   const screenToWorld = useCallback(
@@ -253,6 +267,23 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
               ctx.restore();
             }
           }
+          if (snapEnabled && snapIndicator?.kind) {
+            ctx.save();
+            ctx.translate(canvas.width / 2 + pan.x, canvas.height / 2 + pan.y);
+            ctx.scale(zoom, zoom);
+            const { x, y } = snapIndicator.point;
+            ctx.strokeStyle = '#2dd4bf';
+            ctx.lineWidth = 2 / zoom;
+            ctx.beginPath();
+            ctx.arc(x, y, 7 / zoom, 0, Math.PI * 2);
+            ctx.moveTo(x - 12 / zoom, y); ctx.lineTo(x + 12 / zoom, y);
+            ctx.moveTo(x, y - 12 / zoom); ctx.lineTo(x, y + 12 / zoom);
+            ctx.stroke();
+            ctx.fillStyle = '#5eead4';
+            ctx.font = `${11 / zoom}px sans-serif`;
+            ctx.fillText(snapIndicator.kind, x + 13 / zoom, y - 12 / zoom);
+            ctx.restore();
+          }
         }
       }
       animId = requestAnimationFrame(render);
@@ -282,6 +313,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     weightBrushSettings,
     cutStart,
     cutEnd,
+    snapEnabled,
+    snapIndicator,
   ]);
 
   // Handle Resize
@@ -453,7 +486,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
       // ADD BONE / DRAW MODE
       if (tool === 'add_bone') {
-        handleAddBoneClick(worldPos);
+        handleAddBoneClick(snapAt(worldPos, addBoneAnchor()).point);
         return;
       }
 
@@ -469,7 +502,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         // IK Mode or IK tool on tip joint
         if (tool === 'ik' || (mode === 'pose' && e.shiftKey && joint?.type === 'end')) {
           setDragAction({ type: 'ik', boneId });
-          studioStore.applyIK(boneId, worldPos);
+          studioStore.applyIK(boneId, snapAt(worldPos, bone.start, boneId).point);
           return;
         }
 
@@ -499,7 +532,12 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const worldPos = screenToWorld(e.clientX, e.clientY);
-    setCursorWorldPos(worldPos);
+    const anchor = tool === 'add_bone' ? addBoneAnchor() : dragAction
+      ? skeleton?.bones.find(b => b.id === dragAction.boneId)?.start : null;
+    const result = tool === 'add_bone' || dragAction?.type === 'joint_move' || dragAction?.type === 'ik'
+      ? snapAt(worldPos, anchor, dragAction?.boneId) : { point: worldPos, kind: null } as SnapResult;
+    setCursorWorldPos(result.point);
+    setSnapIndicator(result.kind ? result : null);
     if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
     if (isPanning) {
@@ -514,15 +552,17 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       if (dragAction.type === 'paint_weight') {
         studioStore.paintWeights(worldPos);
       } else if (dragAction.type === 'ik') {
-        studioStore.applyIK(dragAction.boneId, worldPos);
+        studioStore.applyIK(dragAction.boneId, result.point);
       } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
-        studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, worldPos);
+        studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, result.point);
       } else if (dragAction.type === 'bone_rotate') {
         const bone = skeleton?.bones.find((b) => b.id === dragAction.boneId);
         if (bone && dragAction.startAngle !== undefined && dragAction.mouseStartAngle !== undefined) {
           const currentMouseAngle = angleBetween(bone.start, worldPos);
           const delta = normalizeAngle(currentMouseAngle - dragAction.mouseStartAngle);
-          studioStore.setBoneAngle(dragAction.boneId, dragAction.startAngle + delta);
+          const parentAngle = skeleton?.bones.find(b => b.id === bone.parentId)?.worldAngle ?? 0;
+          const angle = dragAction.startAngle + delta;
+          studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle);
         }
       }
       return;
@@ -535,6 +575,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleMouseUp = () => {
+    setSnapIndicator(null);
     if (cutStart && cutEnd && tool === 'cut') {
       try {
         studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
@@ -589,7 +630,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
       // Handle add bone on touch
       if (tool === 'add_bone') {
-        handleAddBoneClick(worldPos);
+        handleAddBoneClick(snapAt(worldPos, addBoneAnchor()).point);
         return;
       }
 
@@ -607,7 +648,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
         if (tool === 'ik' || joint?.type === 'end') {
           setDragAction({ type: 'ik', boneId });
-          studioStore.applyIK(boneId, worldPos);
+          studioStore.applyIK(boneId, snapAt(worldPos, bone.start, boneId).point);
           return;
         }
 
@@ -648,7 +689,12 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     if (e.touches.length === 1 && !touchState.current.isMultiTouch) {
       const t = e.touches[0];
       const worldPos = screenToWorld(t.clientX, t.clientY);
-      setCursorWorldPos(worldPos);
+      const anchor = tool === 'add_bone' ? addBoneAnchor() : dragAction
+        ? skeleton?.bones.find(b => b.id === dragAction.boneId)?.start : null;
+      const result = tool === 'add_bone' || dragAction?.type === 'joint_move' || dragAction?.type === 'ik'
+        ? snapAt(worldPos, anchor, dragAction?.boneId) : { point: worldPos, kind: null } as SnapResult;
+      setCursorWorldPos(result.point);
+      setSnapIndicator(result.kind ? result : null);
       if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
       if (isPanning) {
@@ -663,15 +709,17 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         if (dragAction.type === 'paint_weight') {
           studioStore.paintWeights(worldPos);
         } else if (dragAction.type === 'ik') {
-          studioStore.applyIK(dragAction.boneId, worldPos);
+          studioStore.applyIK(dragAction.boneId, result.point);
         } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
-          studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, worldPos);
+          studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, result.point);
         } else if (dragAction.type === 'bone_rotate') {
           const bone = skeleton?.bones.find((b) => b.id === dragAction.boneId);
           if (bone && dragAction.startAngle !== undefined && dragAction.mouseStartAngle !== undefined) {
             const currentMouseAngle = angleBetween(bone.start, worldPos);
             const delta = normalizeAngle(currentMouseAngle - dragAction.mouseStartAngle);
-            studioStore.setBoneAngle(dragAction.boneId, dragAction.startAngle + delta);
+            const parentAngle = skeleton?.bones.find(b => b.id === bone.parentId)?.worldAngle ?? 0;
+            const angle = dragAction.startAngle + delta;
+            studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle);
           }
         }
       }
@@ -679,6 +727,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleTouchEnd = () => {
+    setSnapIndicator(null);
     if (cutStart && cutEnd && tool === 'cut') {
       try {
         studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
@@ -773,7 +822,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       </div>
 
       {/* Top Right Viewport Controls */}
-      <div className="absolute top-2.5 right-2.5 flex items-center gap-0.5 sm:gap-1 bg-slate-900/90 backdrop-blur-md p-1 rounded-lg sm:rounded-xl border border-slate-800 shadow-xl max-w-[calc(100vw-80px)] overflow-x-auto custom-scrollbar z-20">
+      <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1 max-w-[calc(100vw-80px)]">
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-slate-900/90 backdrop-blur-md p-1 rounded-lg sm:rounded-xl border border-slate-800 shadow-xl min-w-0 overflow-x-auto custom-scrollbar">
         <button
           id="btn_toggle_texture"
           onClick={() => studioStore.toggleView('showTexture')}
@@ -849,6 +899,15 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           className="p-1.5 sm:p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md sm:rounded-lg transition shrink-0"
         >
           <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        </button>
+        </div>
+        <button id="btn_toggle_snap" type="button" aria-label={snapEnabled ? 'Disable snapping' : 'Enable snapping'}
+          aria-pressed={snapEnabled} onClick={() => { studioStore.toggleSnap(); setSnapIndicator(null); }}
+          title={snapEnabled ? 'Snapping on: joints, balanced edges, alignment and cardinal angles' : 'Enable snapping'}
+          className={`p-2 rounded-lg shrink-0 shadow-xl border ${
+            snapEnabled ? 'bg-teal-600 text-white border-teal-300' : 'bg-slate-900 text-slate-300 border-slate-700'
+          }`}>
+          <Magnet className="w-4 h-4" />
         </button>
       </div>
 

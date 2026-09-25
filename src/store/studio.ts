@@ -33,6 +33,11 @@ import { extractAlphaMask } from '../lib/rig/bg-remove';
 import { convertSpineRig } from '../lib/rig/spine-import';
 import { cutMesh } from '../lib/rig/cut';
 
+function storedSnapPreference(): boolean {
+  try { return typeof window !== 'undefined' && window.localStorage.getItem('rig-snap-enabled') === 'true'; }
+  catch { return false; }
+}
+
 const BONE_PALETTE = [
   '#38bdf8', // sky
   '#0284c7', // light blue
@@ -82,6 +87,7 @@ export interface StudioState {
   showMesh: boolean;
   showBones: boolean;
   showWeights: boolean;
+  snapEnabled: boolean;
   zoom: number;
   pan: Point2D;
 
@@ -110,6 +116,7 @@ export interface StudioState {
   scrapSuggestedSkeleton: () => void;
   setMode: (mode: StudioMode) => void;
   setTool: (tool: StudioTool) => void;
+  toggleSnap: () => void;
   cutArtwork: (start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string) => void;
   setSelectedBoneId: (id: string | null) => void;
   setHoveredBoneId: (id: string | null) => void;
@@ -202,6 +209,7 @@ class StudioStore {
       showMesh: false,
       showBones: true,
       showWeights: false,
+      snapEnabled: storedSnapPreference(),
       zoom: 1.0,
       pan: { x: 0, y: 0 },
       weightBrushSettings: {
@@ -228,6 +236,7 @@ class StudioStore {
       scrapSuggestedSkeleton: () => this.scrapSuggestedSkeleton(),
       setMode: (mode) => this.setMode(mode),
       setTool: (tool) => this.setTool(tool),
+      toggleSnap: () => this.toggleSnap(),
       cutArtwork: (start, end, leftBoneId, rightBoneId) => this.cutArtwork(start, end, leftBoneId, rightBoneId),
       setSelectedBoneId: (id) => this.setSelectedBoneId(id),
       setHoveredBoneId: (id) => this.setHoveredBoneId(id),
@@ -839,6 +848,12 @@ class StudioStore {
 
   public setTool(tool: StudioTool) {
     this.setState({ tool });
+  }
+
+  public toggleSnap() {
+    const snapEnabled = !this.state.snapEnabled;
+    try { window.localStorage.setItem('rig-snap-enabled', String(snapEnabled)); } catch { /* Private mode. */ }
+    this.setState({ snapEnabled });
   }
 
   public cutArtwork(start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string) {
