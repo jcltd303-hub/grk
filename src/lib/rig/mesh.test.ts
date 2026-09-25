@@ -129,3 +129,36 @@ test('automatic weights blend across a connected joint', () => {
 
   assert.ok(joint.length > 0);
 });
+
+test('equal geometry gives equal sibling priority and decreases priority by generation', () => {
+  const mesh = generateMesh(100, 100, 2, 2);
+  const skeleton: Skeleton = {
+    bones: ['root', 'left', 'right', 'grandchild'].map((id, i) => ({
+      id, name: id, parentId: i === 0 ? null : i === 3 ? 'left' : 'root',
+      localAngle: 0, length: 30, color: '#fff', start: { x: 35, y: 50 },
+      end: { x: 65, y: 50 }, worldAngle: 0, startWidth: 40, endWidth: 40,
+    })),
+    rootId: 'root', rootPos: { x: 35, y: 50 }, restRootPos: { x: 35, y: 50 }, restBones: {},
+  };
+  computeAutoWeights(mesh, skeleton);
+  const weights = Object.fromEntries(mesh.vertices.find(v => v.originalX === 50 && v.originalY === 50)!.weights
+    .map(w => [w.boneId, w.weight]));
+  assert.ok(weights.root > weights.left);
+  assert.equal(weights.left, weights.right);
+  assert.ok(weights.left > weights.grandchild);
+});
+
+test('weights remain local to the fitted envelope away from joints', () => {
+  const mesh = generateMesh(200, 100, 4, 2);
+  const skeleton: Skeleton = {
+    bones: [
+      { id: 'root', name: 'Root', parentId: null, localAngle: 0, length: 30, color: '#fff',
+        start: { x: 40, y: 50 }, end: { x: 70, y: 50 }, worldAngle: 0, startWidth: 20, endWidth: 20 },
+      { id: 'child', name: 'Child', parentId: 'root', localAngle: 0, length: 30, color: '#fff',
+        start: { x: 140, y: 50 }, end: { x: 170, y: 50 }, worldAngle: 0, startWidth: 20, endWidth: 20 },
+    ], rootId: 'root', rootPos: { x: 40, y: 50 }, restRootPos: { x: 40, y: 50 }, restBones: {},
+  };
+  computeAutoWeights(mesh, skeleton);
+  const vertex = mesh.vertices.find(v => v.originalX === 150 && v.originalY === 50)!;
+  assert.deepEqual(vertex.weights, [{ boneId: 'child', weight: 1 }]);
+});

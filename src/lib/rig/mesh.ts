@@ -108,6 +108,18 @@ export function computeAutoWeights(
   const bones = skeleton.bones;
   const safePower = Math.max(1.5, power);
   const influenceLimit = Math.max(1, Math.min(8, Math.floor(maxInfluencesPerVertex)));
+  const byId = new Map(bones.map(bone => [bone.id, bone]));
+  const depthCache = new Map<string, number>();
+  const depthOf = (id: string, visiting = new Set<string>()): number => {
+    if (depthCache.has(id)) return depthCache.get(id)!;
+    const bone = byId.get(id);
+    if (!bone?.parentId || !byId.has(bone.parentId) || visiting.has(id)) return 0;
+    visiting.add(id);
+    const depth = depthOf(bone.parentId, visiting) + 1;
+    visiting.delete(id);
+    depthCache.set(id, depth);
+    return depth;
+  };
 
   type Candidate = { boneId: string; score: number; distance: number; t: number };
   const candidatesFor = (vertex: Vertex): Candidate[] => {
@@ -136,17 +148,14 @@ export function computeAutoWeights(
       const endWidth = Math.max(4, bone.endWidth ?? 16);
       const radius = Math.max(3, ((1 - t) * startWidth + t * endWidth) * 0.5);
 
-      // Geometry-aware falloff: nearby vertices receive strong influence, while
-      // bones whose envelope does not reach the vertex decay rapidly.
+      // A thin feather beyond the envelope blends connected joints. Distant
+      // bones cannot leak across the image. Generations share one prior: the
+      // root is strongest, siblings equal, grandchildren weaker.
       const normalized = distance / (radius + 1.5);
-      const envelope = 1 / (1 + Math.pow(normalized, safePower));
+      const reach = Math.max(0, 1 - normalized / 1.12);
+      const score = Math.pow(reach, safePower) * Math.pow(0.72, depthOf(bone.id));
 
-      // Keep joint regions blended, but prevent distant bones from becoming
-      // accidental influences merely because inverse-distance never reaches zero.
-      const jointBoost = (t < 0.12 || t > 0.88) ? 1.08 : 1;
-      const score = envelope * jointBoost;
-
-      if (score > 0.0005) {
+      if (score > 0) {
         candidates.push({ boneId: bone.id, score, distance, t });
       }
     }
@@ -421,5 +430,4 @@ export function applyWeightBrush(
 
   return modified;
 }
-
 
