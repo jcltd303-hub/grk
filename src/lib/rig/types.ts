@@ -49,6 +49,7 @@ export interface Vertex {
   originalX: number;
   originalY: number;
   weights: VertexWeight[];
+  cutBoneId?: string;
 }
 
 export type Triangle = [number, number, number];
@@ -59,6 +60,7 @@ export interface RigMesh {
   width: number;
   height: number;
   density: number;
+  cut?: { start: Point2D; end: Point2D; leftBoneId: string; rightBoneId: string };
 }
 
 export interface Keyframe {
@@ -79,7 +81,7 @@ export interface AnimationClip {
 
 export type PresetType = 'human' | 'biped' | 'quadruped' | 'fish';
 
-export type StudioTool = 'select' | 'bone_move' | 'bone_rotate' | 'ik' | 'add_bone' | 'weight_brush';
+export type StudioTool = 'select' | 'bone_move' | 'bone_rotate' | 'ik' | 'add_bone' | 'weight_brush' | 'cut';
 
 export type StudioMode = 'rig' | 'pose' | 'animate' | 'weights';
 
@@ -144,9 +146,11 @@ export interface RigExportJSON {
       v: number;
       originalX?: number;
       originalY?: number;
+      cutBoneId?: string;
       weights: Array<{ boneId: string; weight: number }>;
     }>;
     triangles: Triangle[];
+    cut?: RigMesh['cut'];
   };
   animations: AnimationClip[];
 }

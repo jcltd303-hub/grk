@@ -29,6 +29,7 @@ import {
   Redo2,
   Sliders,
   Paintbrush,
+  Scissors,
 } from 'lucide-react';
 
 interface ViewportProps {
@@ -63,6 +64,10 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
+  const [cutStart, setCutStart] = useState<Point2D | null>(null);
+  const [cutEnd, setCutEnd] = useState<Point2D | null>(null);
+  const [cutLeftBone, setCutLeftBone] = useState('');
+  const [cutRightBone, setCutRightBone] = useState('');
   const [dragAction, setDragAction] = useState<{
     type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_weight';
     boneId: string;
@@ -232,6 +237,22 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             branchOriginHint,
             weightBrushPreview,
           });
+          if (mode === 'rig' && (cutStart || mesh?.cut)) {
+            const seam = cutStart && cutEnd ? { start: cutStart, end: cutEnd } : mesh?.cut;
+            if (seam) {
+              ctx.save();
+              ctx.translate(canvas.width / 2 + pan.x, canvas.height / 2 + pan.y);
+              ctx.scale(zoom, zoom);
+              ctx.strokeStyle = '#f97316';
+              ctx.lineWidth = 3 / zoom;
+              ctx.setLineDash([8 / zoom, 5 / zoom]);
+              ctx.beginPath();
+              ctx.moveTo(seam.start.x, seam.start.y);
+              ctx.lineTo(seam.end.x, seam.end.y);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
         }
       }
       animId = requestAnimationFrame(render);
@@ -259,6 +280,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     tool,
     selectedBone,
     weightBrushSettings,
+    cutStart,
+    cutEnd,
   ]);
 
   // Handle Resize
@@ -402,6 +425,11 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
     if (e.button === 0) {
       const worldPos = screenToWorld(e.clientX, e.clientY);
+      if (tool === 'cut' && mode === 'rig') {
+        setCutStart(worldPos);
+        setCutEnd(worldPos);
+        return;
+      }
 
       // WEIGHT BRUSH PAINTING MODE
       if (tool === 'weight_brush' || mode === 'weights') {
@@ -472,6 +500,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const handleMouseMove = (e: React.MouseEvent) => {
     const worldPos = screenToWorld(e.clientX, e.clientY);
     setCursorWorldPos(worldPos);
+    if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
     if (isPanning) {
       const dx = e.clientX - lastMousePos.current.x;
@@ -506,6 +535,13 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleMouseUp = () => {
+    if (cutStart && cutEnd && tool === 'cut') {
+      try {
+        studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
+      } catch (error) { window.alert(error instanceof Error ? error.message : 'Cut failed.'); }
+      setCutStart(null);
+      setCutEnd(null);
+    }
     setIsPanning(false);
     setDragAction(null);
   };
@@ -540,6 +576,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       const t = e.touches[0];
       const worldPos = screenToWorld(t.clientX, t.clientY);
       setCursorWorldPos(worldPos);
+      if (tool === 'cut' && mode === 'rig') { setCutStart(worldPos); setCutEnd(worldPos); return; }
 
       // Handle weight painting on touch
       if (tool === 'weight_brush' || mode === 'weights') {
@@ -612,6 +649,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       const t = e.touches[0];
       const worldPos = screenToWorld(t.clientX, t.clientY);
       setCursorWorldPos(worldPos);
+      if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
       if (isPanning) {
         const dx = t.clientX - lastMousePos.current.x;
@@ -641,6 +679,13 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleTouchEnd = () => {
+    if (cutStart && cutEnd && tool === 'cut') {
+      try {
+        studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
+      } catch (error) { window.alert(error instanceof Error ? error.message : 'Cut failed.'); }
+      setCutStart(null);
+      setCutEnd(null);
+    }
     setIsPanning(false);
     setDragAction(null);
     touchState.current.isMultiTouch = false;
@@ -1120,6 +1165,25 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             <Pencil className="w-3.5 h-3.5" />
             <span>{isAddBoneMode ? 'Drawing...' : 'Click-to-Draw'}</span>
           </button>
+
+          <button id="btn_cut_tool" disabled={!mesh || !skeleton || skeleton.bones.length < 2 || !!mesh.cut}
+            onClick={() => { studioStore.setMode('rig'); studioStore.setTool(tool === 'cut' ? 'select' : 'cut'); }}
+            title={mesh?.cut ? 'Cut applied; undo to draw a different seam' : 'Draw a line to separate artwork between two bones'}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 ${tool === 'cut' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-200'}`}>
+            <Scissors className="w-3.5 h-3.5" /> Cut
+          </button>
+          {tool === 'cut' && skeleton && <div className="flex items-center gap-1 text-xs text-white">
+            <select aria-label="Bone on left of drawn line" value={cutLeftBone || selectedBoneId || ''}
+              onChange={e => setCutLeftBone(e.target.value)} className="bg-slate-900 max-w-24">
+              <option value="">Left bone</option>
+              {skeleton.bones.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <select aria-label="Bone on right of drawn line" value={cutRightBone || skeleton.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || ''}
+              onChange={e => setCutRightBone(e.target.value)} className="bg-slate-900 max-w-24">
+              <option value="">Right bone</option>
+              {skeleton.bones.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>}
 
           <button
             id="btn_add_branch_bone"

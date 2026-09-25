@@ -31,6 +31,7 @@ import { solveCCD2D } from '../lib/rig/ik';
 import { lerpAngle, normalizeAngle, degToRad } from '../lib/rig/math';
 import { extractAlphaMask } from '../lib/rig/bg-remove';
 import { convertSpineRig } from '../lib/rig/spine-import';
+import { cutMesh } from '../lib/rig/cut';
 
 const BONE_PALETTE = [
   '#38bdf8', // sky
@@ -51,6 +52,7 @@ export interface HistorySnapshot {
   restSkeleton: Skeleton | null;
   selectedBoneId: string | null;
   mode: StudioMode;
+  mesh: RigMesh | null;
 }
 
 export interface StudioState {
@@ -108,6 +110,7 @@ export interface StudioState {
   scrapSuggestedSkeleton: () => void;
   setMode: (mode: StudioMode) => void;
   setTool: (tool: StudioTool) => void;
+  cutArtwork: (start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string) => void;
   setSelectedBoneId: (id: string | null) => void;
   setHoveredBoneId: (id: string | null) => void;
   setHoveredJoint: (joint: { boneId: string; type: 'start' | 'end' } | null) => void;
@@ -225,6 +228,7 @@ class StudioStore {
       scrapSuggestedSkeleton: () => this.scrapSuggestedSkeleton(),
       setMode: (mode) => this.setMode(mode),
       setTool: (tool) => this.setTool(tool),
+      cutArtwork: (start, end, leftBoneId, rightBoneId) => this.cutArtwork(start, end, leftBoneId, rightBoneId),
       setSelectedBoneId: (id) => this.setSelectedBoneId(id),
       setHoveredBoneId: (id) => this.setHoveredBoneId(id),
       setHoveredJoint: (joint) => this.setHoveredJoint(joint),
@@ -311,6 +315,7 @@ class StudioStore {
       restSkeleton: this.state.restSkeleton ? cloneSkeleton(this.state.restSkeleton) : null,
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
+      mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
     };
     this.undoStack.push(snapshot);
     this.redoStack = []; // clear redo on new action
@@ -328,12 +333,14 @@ class StudioStore {
       restSkeleton: this.state.restSkeleton ? cloneSkeleton(this.state.restSkeleton) : null,
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
+      mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
     };
     this.redoStack.push(currentSnapshot);
 
     const prevSnapshot = this.undoStack.pop()!;
     this.state.skeleton = prevSnapshot.skeleton ? cloneSkeleton(prevSnapshot.skeleton) : null;
     this.state.restSkeleton = prevSnapshot.restSkeleton ? cloneSkeleton(prevSnapshot.restSkeleton) : null;
+    this.state.mesh = prevSnapshot.mesh ? structuredClone(prevSnapshot.mesh) : null;
     this.state.selectedBoneId = prevSnapshot.selectedBoneId;
     this.state.canUndo = this.undoStack.length > 0;
     this.state.canRedo = this.redoStack.length > 0;
@@ -354,12 +361,14 @@ class StudioStore {
       restSkeleton: this.state.restSkeleton ? cloneSkeleton(this.state.restSkeleton) : null,
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
+      mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
     };
     this.undoStack.push(currentSnapshot);
 
     const nextSnapshot = this.redoStack.pop()!;
     this.state.skeleton = nextSnapshot.skeleton ? cloneSkeleton(nextSnapshot.skeleton) : null;
     this.state.restSkeleton = nextSnapshot.restSkeleton ? cloneSkeleton(nextSnapshot.restSkeleton) : null;
+    this.state.mesh = nextSnapshot.mesh ? structuredClone(nextSnapshot.mesh) : null;
     this.state.selectedBoneId = nextSnapshot.selectedBoneId;
     this.state.canUndo = this.undoStack.length > 0;
     this.state.canRedo = this.redoStack.length > 0;
@@ -480,9 +489,11 @@ class StudioStore {
               v: v.v,
               originalX: v.originalX,
               originalY: v.originalY,
+              cutBoneId: v.cutBoneId,
               weights: v.weights.map((w) => ({ boneId: w.boneId, weight: w.weight })),
             })),
             triangles: mesh.triangles,
+            cut: mesh.cut,
           }
         : undefined,
       animations: clips.map((c) => ({
@@ -601,6 +612,7 @@ class StudioStore {
               height: data.mesh.height || h,
               density: data.mesh.density || 24,
               triangles: data.mesh.triangles,
+              cut: data.mesh.cut,
               vertices: data.mesh.vertices.map((v: any) => ({
                 x: v.x,
                 y: v.y,
@@ -608,6 +620,7 @@ class StudioStore {
                 v: v.v,
                 originalX: typeof v.originalX === 'number' ? v.originalX : v.x,
                 originalY: typeof v.originalY === 'number' ? v.originalY : v.y,
+                cutBoneId: v.cutBoneId,
                 weights: Array.isArray(v.weights)
                   ? v.weights.map((w: any) => ({ boneId: w.boneId, weight: w.weight }))
                   : [],
@@ -826,6 +839,18 @@ class StudioStore {
 
   public setTool(tool: StudioTool) {
     this.setState({ tool });
+  }
+
+  public cutArtwork(start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string) {
+    const { mesh, skeleton, mode } = this.state;
+    if (mode !== 'rig' || !mesh || !skeleton) throw new Error('Load artwork and enter Rig mode to cut.');
+    if (![leftBoneId, rightBoneId].every(id => skeleton.bones.some(b => b.id === id))) {
+      throw new Error('Choose a bone for each side of the cut.');
+    }
+    const result = cutMesh(mesh, start, end, leftBoneId, rightBoneId);
+    this.saveHistory();
+    this.setState({ mesh: result, tool: 'select' });
+    this.updateDeformedMesh();
   }
 
   public setSelectedBoneId(id: string | null) {
@@ -1372,6 +1397,11 @@ class StudioStore {
     inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
     fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
     computeAutoWeights(mesh, bindSkeleton);
+    for (const vertex of mesh.vertices) {
+      if (vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
+        vertex.weights = [{ boneId: vertex.cutBoneId, weight: 1 }];
+      }
+    }
 
     // Keep active and bind envelopes identical after automatic inference.
     for (const bone of skeleton.bones) {
