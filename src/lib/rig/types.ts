@@ -83,7 +83,7 @@ export interface AnimationClip {
 
 export type PresetType = 'human' | 'biped' | 'quadruped' | 'fish';
 
-export type StudioTool = 'select' | 'bone_move' | 'bone_rotate' | 'ik' | 'add_bone' | 'weight_brush' | 'cut';
+export type StudioTool = 'part_brush' | 'select' | 'bone_move' | 'bone_rotate' | 'ik' | 'add_bone' | 'weight_brush' | 'cut';
 
 export type StudioMode = 'rig' | 'pose' | 'animate' | 'weights';
 
@@ -156,5 +156,6 @@ export interface RigExportJSON {
     triangles: Triangle[];
     cut?: RigMesh['cut'];
   };
+  partOwnership?: import('./part-brush').SerializedPartOwnership;
   animations: AnimationClip[];
 }

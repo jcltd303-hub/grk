@@ -1,5 +1,6 @@
-import type { AnimationClip, RigMesh, Skeleton } from './types';
-import { createSpineAtlas, createSpineSkeleton } from './spine-export';
+import type { AnimationClip, RigMesh, Skeleton, RigExportJSON } from './types';
+import { createSpineAtlas, createSpineSkeleton, createSpinePartSkeleton } from './spine-export';
+import { getPartBounds, type PartOwnership } from './part-brush';
 
 const encoder = new TextEncoder();
 const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -53,9 +54,44 @@ export async function createSpinePackage(input: {
   mesh: RigMesh;
   clips: AnimationClip[];
   image: HTMLImageElement;
+  partOwnership?: PartOwnership | null;
+  project?: RigExportJSON | null;
 }): Promise<Blob> {
   const width = input.image.naturalWidth || input.image.width;
   const height = input.image.naturalHeight || input.image.height;
+  const mask=input.partOwnership;
+  if(mask && mask.width===width && mask.height===height){
+    const bounds=getPartBounds(mask).filter(b=>input.skeleton.bones.some(bone=>bone.id===b.boneId));
+    if(!bounds.length)throw new Error('Paint at least one visible part before exporting.');
+    const json=createSpinePartSkeleton({...input,width,height},bounds);
+    const files:{name:string;data:Uint8Array}[]=[{name:'rig.json',data:encoder.encode(JSON.stringify(json,null,2))}];
+    const atlas:string[]=[];
+    for(const part of bounds){
+      const canvas=document.createElement('canvas');canvas.width=part.width;canvas.height=part.height;
+      const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Unable to create a part canvas.');
+      ctx.drawImage(input.image,part.x,part.y,part.width,part.height,0,0,part.width,part.height);
+      const data=ctx.getImageData(0,0,part.width,part.height);
+      const owner=mask.boneIds.indexOf(part.boneId)+1;
+      for(let y=0;y<part.height;y++)for(let x=0;x<part.width;x++)
+        if(mask.pixels[(part.y+y)*width+part.x+x]!==owner)data.data[4*(y*part.width+x)+3]=0;
+      ctx.putImageData(data,0,0);
+      const png=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(
+        blob=>blob?resolve(blob):reject(new Error('Could not encode part PNG.')),'image/png'));
+      files.push({name:`${part.name}.png`,data:new Uint8Array(await png.arrayBuffer())});
+      atlas.push(`${part.name}.png\nsize: ${part.width},${part.height}\nformat: RGBA8888\nfilter: Linear,Linear\nrepeat: none\npma: false\n${part.name}\nbounds: 0,0,${part.width},${part.height}\nrotate: false\n`);
+    }
+    files.push({name:'rig.atlas',data:encoder.encode(atlas.join('\n'))});
+    if(input.project){
+      const original=document.createElement('canvas');original.width=width;original.height=height;
+      const ctx=original.getContext('2d');if(!ctx)throw new Error('Unable to encode source artwork.');
+      ctx.drawImage(input.image,0,0,width,height);
+      const png=await new Promise<Blob>((resolve,reject)=>original.toBlob(
+        blob=>blob?resolve(blob):reject(new Error('Could not encode source artwork.')),'image/png'));
+      files.push({name:'artwork.png',data:new Uint8Array(await png.arrayBuffer())});
+      files.push({name:'project.json',data:encoder.encode(JSON.stringify(input.project))});
+    }
+    return zipFiles(files);
+  }
   const json = createSpineSkeleton({ ...input, width, height });
   const canvas = document.createElement('canvas');
   canvas.width = width;

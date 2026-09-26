@@ -32,6 +32,7 @@ import { lerpAngle, normalizeAngle, degToRad } from '../lib/rig/math';
 import { extractAlphaMask } from '../lib/rig/bg-remove';
 import { convertSpineRig } from '../lib/rig/spine-import';
 import { cutMesh } from '../lib/rig/cut';
+import { createPartOwnership, paintPartStroke, encodeOwnership, decodeOwnership, type PartOwnership } from '../lib/rig/part-brush';
 
 function storedSnapPreference(): boolean {
   try { return typeof window !== 'undefined' && window.localStorage.getItem('rig-snap-enabled') === 'true'; }
@@ -58,6 +59,7 @@ export interface HistorySnapshot {
   selectedBoneId: string | null;
   mode: StudioMode;
   mesh: RigMesh | null;
+  partOwnership: PartOwnership | null;
 }
 
 export interface StudioState {
@@ -71,6 +73,10 @@ export interface StudioState {
   skeleton: Skeleton | null;
   restSkeleton: Skeleton | null;
   mesh: RigMesh | null;
+  partOwnership: PartOwnership | null;
+  partBrushRadius: number;
+  partBrushSmart: boolean;
+  partBrushErase: boolean;
   pendingSkeletonReview: boolean;
 
   // Editor State
@@ -161,6 +167,10 @@ export interface StudioState {
   // Weight Brush Operations
   setWeightBrushSettings: (settings: Partial<WeightBrushSettings>) => void;
   paintWeights: (worldPos: Point2D) => void;
+  beginPartStroke: (point: Point2D) => boolean;
+  paintPart: (point: Point2D) => void;
+  endPartStroke: () => void;
+  setPartBrush: (options: Partial<Pick<StudioState,'partBrushRadius'|'partBrushSmart'|'partBrushErase'>>) => void;
   smoothAllWeightsForBone: (boneId?: string) => void;
 
 
@@ -188,6 +198,8 @@ class StudioStore {
   private listeners: Set<Listener> = new Set();
   private undoStack: HistorySnapshot[] = [];
   private redoStack: HistorySnapshot[] = [];
+  private partStrokeActive = false;
+  private detailCache: { image: HTMLImageElement; pixels: Uint8ClampedArray } | null = null;
 
   constructor() {
     this.state = {
@@ -198,6 +210,10 @@ class StudioStore {
       skeleton: null,
       restSkeleton: null,
       mesh: null,
+      partOwnership: null,
+      partBrushRadius: 18,
+      partBrushSmart: true,
+      partBrushErase: false,
       pendingSkeletonReview: false,
       mode: 'rig',
       tool: 'add_bone',
@@ -271,6 +287,10 @@ class StudioStore {
       recomputeWeights: () => this.recomputeWeights(),
       setWeightBrushSettings: (settings) => this.setWeightBrushSettings(settings),
       paintWeights: (worldPos) => this.paintWeights(worldPos),
+      beginPartStroke: (point) => this.beginPartStroke(point),
+      paintPart: (point) => this.paintPart(point),
+      endPartStroke: () => this.endPartStroke(),
+      setPartBrush: (options) => this.setPartBrush(options),
       smoothAllWeightsForBone: (boneId) => this.smoothAllWeightsForBone(boneId),
       play: () => this.play(),
       pause: () => this.pause(),
@@ -327,6 +347,7 @@ class StudioStore {
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
       mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
+      partOwnership: this.state.partOwnership ? structuredClone(this.state.partOwnership) : null,
     };
     this.undoStack.push(snapshot);
     this.redoStack = []; // clear redo on new action
@@ -345,6 +366,7 @@ class StudioStore {
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
       mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
+      partOwnership: this.state.partOwnership ? structuredClone(this.state.partOwnership) : null,
     };
     this.redoStack.push(currentSnapshot);
 
@@ -352,6 +374,7 @@ class StudioStore {
     this.state.skeleton = prevSnapshot.skeleton ? cloneSkeleton(prevSnapshot.skeleton) : null;
     this.state.restSkeleton = prevSnapshot.restSkeleton ? cloneSkeleton(prevSnapshot.restSkeleton) : null;
     this.state.mesh = prevSnapshot.mesh ? structuredClone(prevSnapshot.mesh) : null;
+    this.state.partOwnership = prevSnapshot.partOwnership ? structuredClone(prevSnapshot.partOwnership) : null;
     this.state.selectedBoneId = prevSnapshot.selectedBoneId;
     this.state.canUndo = this.undoStack.length > 0;
     this.state.canRedo = this.redoStack.length > 0;
@@ -373,6 +396,7 @@ class StudioStore {
       selectedBoneId: this.state.selectedBoneId,
       mode: this.state.mode,
       mesh: this.state.mesh ? structuredClone(this.state.mesh) : null,
+      partOwnership: this.state.partOwnership ? structuredClone(this.state.partOwnership) : null,
     };
     this.undoStack.push(currentSnapshot);
 
@@ -380,6 +404,7 @@ class StudioStore {
     this.state.skeleton = nextSnapshot.skeleton ? cloneSkeleton(nextSnapshot.skeleton) : null;
     this.state.restSkeleton = nextSnapshot.restSkeleton ? cloneSkeleton(nextSnapshot.restSkeleton) : null;
     this.state.mesh = nextSnapshot.mesh ? structuredClone(nextSnapshot.mesh) : null;
+    this.state.partOwnership = nextSnapshot.partOwnership ? structuredClone(nextSnapshot.partOwnership) : null;
     this.state.selectedBoneId = nextSnapshot.selectedBoneId;
     this.state.canUndo = this.undoStack.length > 0;
     this.state.canRedo = this.redoStack.length > 0;
@@ -509,6 +534,7 @@ class StudioStore {
             cut: mesh.cut,
           }
         : undefined,
+      partOwnership: this.state.partOwnership ? encodeOwnership(this.state.partOwnership) : undefined,
       animations: clips.map((c) => ({
         id: c.id,
         name: c.name,
@@ -690,12 +716,25 @@ class StudioStore {
           this.undoStack = [];
           this.redoStack = [];
 
+          let restoredParts: PartOwnership | null = null;
+          if (data.partOwnership) {
+            try {
+              restoredParts = decodeOwnership(data.partOwnership);
+              if (restoredParts.width !== w || restoredParts.height !== h ||
+                restoredParts.boneIds.some(id => !skeleton.bones.some(b => b.id === id)))
+                throw new Error('Painted parts do not match the artwork or skeleton.');
+            } catch (error) {
+              resolve({success:false,error:error instanceof Error ? error.message : 'Invalid part masks.'});
+              return;
+            }
+          }
           this.setState({
             activePresetId: '',
             image: img,
             imageLoaded: true,
             alphaMask,
             mesh,
+            partOwnership: restoredParts,
             skeleton,
             restSkeleton,
             pendingSkeletonReview: false,
@@ -767,6 +806,7 @@ class StudioStore {
         imageLoaded: true,
         alphaMask,
         mesh,
+        partOwnership: null,
         skeleton,
         restSkeleton,
         pendingSkeletonReview: true,
@@ -1296,6 +1336,18 @@ class StudioStore {
 
     const nextSelected = parentId || skeleton.bones[0]?.id || null;
 
+    if (this.state.partOwnership) {
+      const mask=this.state.partOwnership;
+      const removed=mask.boneIds.indexOf(targetId);
+      if(removed>=0){
+        mask.boneIds.splice(removed,1);
+        for(let i=0;i<mask.pixels.length;i++){
+          if(mask.pixels[i]===removed+1)mask.pixels[i]=0;
+          else if(mask.pixels[i]>removed+1)mask.pixels[i]--;
+        }
+        mask.revision++;
+      }
+    }
     if (skeleton.bones.length > 0) {
       updateWorldTransforms(skeleton);
       if (restSkeleton) updateWorldTransforms(restSkeleton);
@@ -1315,6 +1367,7 @@ class StudioStore {
     if (!skeleton) return;
     skeleton.bones = [];
     skeleton.restBones = {};
+    this.state.partOwnership = null;
     if (restSkeleton) {
       restSkeleton.bones = [];
       restSkeleton.restBones = {};
@@ -1511,6 +1564,55 @@ class StudioStore {
       },
     });
   }
+
+  public setPartBrush(options: Partial<Pick<StudioState,'partBrushRadius'|'partBrushSmart'|'partBrushErase'>>) {
+    this.setState({
+      partBrushRadius: Math.max(2,Math.min(150,options.partBrushRadius ?? this.state.partBrushRadius)),
+      partBrushSmart: options.partBrushSmart ?? this.state.partBrushSmart,
+      partBrushErase: options.partBrushErase ?? this.state.partBrushErase,
+    });
+  }
+
+  private getDetailPixels(): Uint8ClampedArray | null {
+    const image = this.state.image;
+    if (!image || typeof document === 'undefined') return null;
+    if (this.detailCache?.image === image) return this.detailCache.pixels;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth || image.width;
+      canvas.height = image.naturalHeight || image.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(image,0,0);
+      const pixels = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+      this.detailCache = {image,pixels};
+      return pixels;
+    } catch { return null; }
+  }
+
+  public beginPartStroke(point: Point2D): boolean {
+    const { skeleton, alphaMask, mesh, selectedBoneId } = this.state;
+    if (!skeleton || !selectedBoneId || !skeleton.bones.some(b=>b.id===selectedBoneId)
+      || !mesh || !alphaMask || alphaMask.length!==mesh.width*mesh.height || this.state.mode!=='rig') return false;
+    this.saveHistory();
+    if (!this.state.partOwnership || this.state.partOwnership.width !== mesh.width || this.state.partOwnership.height !== mesh.height) {
+      this.state.partOwnership = createPartOwnership(skeleton,alphaMask,mesh.width,mesh.height);
+    }
+    this.partStrokeActive = true;
+    this.paintPart(point);
+    return true;
+  }
+
+  public paintPart(point: Point2D) {
+    const { partOwnership, selectedBoneId, alphaMask, partBrushRadius, partBrushSmart, partBrushErase } = this.state;
+    if (!this.partStrokeActive || !partOwnership || !selectedBoneId || !alphaMask) return;
+    if (!partOwnership.boneIds.includes(selectedBoneId)) partOwnership.boneIds.push(selectedBoneId);
+    const detail = partBrushSmart ? this.getDetailPixels() : null;
+    if (paintPartStroke(partOwnership,alphaMask,detail,point,partBrushRadius,selectedBoneId,
+      partBrushErase ? 'erase' : 'paint',partBrushSmart && !!detail)) this.notify();
+  }
+
+  public endPartStroke() { this.partStrokeActive = false; }
 
   public paintWeights(_worldPos: Point2D) {
     // Manual weight painting is intentionally obsolete. Automatic geometry

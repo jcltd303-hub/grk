@@ -179,3 +179,32 @@ bounds: 0,0,${width},${height}
 rotate: false
 `;
 }
+
+/** One transparent atlas page per painted part, attached rigidly to its own bone. */
+export function createSpinePartSkeleton(input: ExportInput, parts: import('./part-brush').PartBounds[]) {
+  const output=createSpineSkeleton(input);
+  const bind=input.bindSkeleton ?? input.skeleton;
+  const ordered:Skeleton['bones']=[],byId=new Map(bind.bones.map(b=>[b.id,b]));
+  const visited=new Set<string>();
+  const visit=(b:Skeleton['bones'][number])=>{
+    if(visited.has(b.id))return;
+    if(b.parentId){const parent=byId.get(b.parentId);if(parent)visit(parent);}
+    visited.add(b.id);ordered.push(b);
+  };
+  input.skeleton.bones.forEach(visit);
+  const boneNames=new Map(ordered.map((b,i)=>[b.id,output.bones[i].name]));
+  const slots:{name:string;bone:string;attachment:string}[]=[];
+  const attachments:Record<string,Record<string,{type:string;path:string;x:number;y:number;width:number;height:number}>>={};
+  for(const part of parts){
+    const bone=byId.get(part.boneId),name=boneNames.get(part.boneId);
+    if(!bone||!name)continue;
+    const centerX=part.x+part.width/2,centerY=part.y+part.height/2;
+    const dx=centerX-bone.start.x,dy=bone.start.y-centerY;
+    const angle=bone.worldAngle;
+    const x=Math.cos(angle)*dx-Math.sin(angle)*dy;
+    const y=Math.sin(angle)*dx+Math.cos(angle)*dy;
+    slots.push({name:part.name,bone:name,attachment:part.name});
+    attachments[part.name]={[part.name]:{type:'region',path:part.name,x,y,width:part.width,height:part.height}};
+  }
+  return {...output,slots,skins:[{name:'default',attachments}]};
+}

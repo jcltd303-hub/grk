@@ -129,20 +129,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   };
 
   const handleExportSpine = async () => {
-    const { skeleton, restSkeleton, mesh, clips, image } = studioStore.getState();
+    const { skeleton, restSkeleton, mesh, clips, image, partOwnership } = studioStore.getState();
     if (!skeleton || !mesh || !image) {
       setExportNotice('Add artwork, bones, and a mesh before exporting.');
       return;
     }
     try {
-      const file = await createSpinePackage({ skeleton, bindSkeleton: restSkeleton ?? skeleton, mesh, clips, image });
+      const file = await createSpinePackage({ skeleton, bindSkeleton: restSkeleton ?? skeleton, mesh, clips, image, partOwnership,
+        project: partOwnership ? studioStore.exportRigJSON({ embedImage:false }) : null });
       const url = URL.createObjectURL(file);
       const link = document.createElement('a');
       link.download = 'spine-rig.zip';
       link.href = url;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setExportNotice('Exported Spine JSON, atlas, and PNG.');
+      setExportNotice('Exported Spine JSON, atlas, and painted part PNGs.');
     } catch (error) {
       setExportNotice(error instanceof Error ? error.message : 'Spine export failed.');
     }

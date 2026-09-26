@@ -97,7 +97,8 @@ export const LoadRigModal: React.FC<LoadRigModalProps> = ({ isOpen, onClose }) =
           reader.onerror = () => reject(new Error('Could not read artwork.png.'));
           reader.readAsDataURL(new Blob([new Uint8Array(png) as BlobPart], { type: 'image/png' }));
         });
-        inspectAndSetJSON(JSON.stringify({ ...parsed, image: { dataUrl: imageDataUrl } }), file.name);
+        const project=files['project.json'] ? JSON.parse(new TextDecoder().decode(files['project.json'])) : parsed;
+        inspectAndSetJSON(JSON.stringify({ ...project, image: { ...(project.image||{}), dataUrl: imageDataUrl } }), file.name);
       } else {
         inspectAndSetJSON(await file.text(), file.name);
       }

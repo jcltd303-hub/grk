@@ -45,6 +45,11 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   // Store selections
   const image = useStudioStore((s) => s.image);
   const mesh = useStudioStore((s) => s.mesh);
+  const partOwnership = useStudioStore((s) => s.partOwnership);
+  const partBrushRadius = useStudioStore((s) => s.partBrushRadius);
+  const partBrushSmart = useStudioStore((s) => s.partBrushSmart);
+  const partBrushErase = useStudioStore((s) => s.partBrushErase);
+  const bindSkeleton = useStudioStore((s) => s.restSkeleton);
   const alphaMask = useStudioStore((s) => s.alphaMask);
   const snapEnabled = useStudioStore((s) => s.snapEnabled);
   const skeleton = useStudioStore((s) => s.skeleton);
@@ -74,7 +79,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const [cutLeftBone, setCutLeftBone] = useState('');
   const [cutRightBone, setCutRightBone] = useState('');
   const [dragAction, setDragAction] = useState<{
-    type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_weight';
+    type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_weight' | 'paint_part';
     boneId: string;
     jointType?: 'start' | 'end';
     startAngle?: number;
@@ -105,6 +110,17 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const cursorWorldPosRef = useRef<Point2D | null>(null);
   cursorWorldPosRef.current = cursorWorldPos;
 
+  const lastPaintPos = useRef<Point2D | null>(null);
+  const paintThrough = (point:Point2D) => {
+    const previous=lastPaintPos.current;
+    if(previous){
+      const length=Math.hypot(point.x-previous.x,point.y-previous.y);
+      const steps=Math.max(1,Math.ceil(length/Math.max(2,partBrushRadius/2)));
+      for(let i=1;i<=steps;i++) studioStore.paintPart({x:previous.x+(point.x-previous.x)*i/steps,
+        y:previous.y+(point.y-previous.y)*i/steps});
+    }else studioStore.paintPart(point);
+    lastPaintPos.current=point;
+  };
   const lastMousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Touch tracking
@@ -225,10 +241,10 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
           // Weight brush HUD preview (when in weights mode or weight_brush tool)
           let weightBrushPreview = null;
-          if ((mode === 'weights' || tool === 'weight_brush') && cursorWorldPosRef.current) {
+          if ((mode === 'weights' || tool === 'weight_brush' || tool === 'part_brush') && cursorWorldPosRef.current) {
             weightBrushPreview = {
               pos: cursorWorldPosRef.current,
-              radius: weightBrushSettings.radius,
+              radius: tool === 'part_brush' ? partBrushRadius : weightBrushSettings.radius,
               intensity: weightBrushSettings.intensity,
               mode: weightBrushSettings.mode,
             };
@@ -236,6 +252,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
           renderRigScene(ctx, image, mesh, skeleton, {
             mode,
+            partOwnership,
+            bindSkeleton,
+            showPartColors: tool === 'part_brush',
             showTexture,
             showMesh,
             showBones,
@@ -464,6 +483,14 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         return;
       }
 
+      if (tool === 'part_brush' && mode === 'rig') {
+        if (studioStore.beginPartStroke(worldPos)) {
+          lastPaintPos.current = worldPos;
+          setDragAction({ type:'paint_part', boneId:selectedBoneId! });
+        }
+        return;
+      }
+
       // WEIGHT BRUSH PAINTING MODE
       if (tool === 'weight_brush' || mode === 'weights') {
         const { boneId } = findHoverTarget(worldPos);
@@ -549,7 +576,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     }
 
     if (dragAction) {
-      if (dragAction.type === 'paint_weight') {
+      if (dragAction.type === 'paint_part') {
+        paintThrough(worldPos);
+      } else if (dragAction.type === 'paint_weight') {
         studioStore.paintWeights(worldPos);
       } else if (dragAction.type === 'ik') {
         studioStore.applyIK(dragAction.boneId, result.point);
@@ -575,6 +604,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleMouseUp = () => {
+    if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
     setSnapIndicator(null);
     if (cutStart && cutEnd && tool === 'cut') {
       try {
@@ -597,6 +627,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   // Touch event handlers for mobile devices
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
+      if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
@@ -618,6 +649,13 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       const worldPos = screenToWorld(t.clientX, t.clientY);
       setCursorWorldPos(worldPos);
       if (tool === 'cut' && mode === 'rig') { setCutStart(worldPos); setCutEnd(worldPos); return; }
+      if (tool === 'part_brush' && mode === 'rig') {
+        if (studioStore.beginPartStroke(worldPos)) {
+          lastPaintPos.current=worldPos;
+          setDragAction({type:'paint_part',boneId:selectedBoneId!});
+        }
+        return;
+      }
 
       // Handle weight painting on touch
       if (tool === 'weight_brush' || mode === 'weights') {
@@ -706,7 +744,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       }
 
       if (dragAction) {
-        if (dragAction.type === 'paint_weight') {
+        if (dragAction.type === 'paint_part') {
+          paintThrough(worldPos);
+        } else if (dragAction.type === 'paint_weight') {
           studioStore.paintWeights(worldPos);
         } else if (dragAction.type === 'ik') {
           studioStore.applyIK(dragAction.boneId, result.point);
@@ -727,6 +767,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const handleTouchEnd = () => {
+    if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
     setSnapIndicator(null);
     if (cutStart && cutEnd && tool === 'cut') {
       try {
@@ -741,7 +782,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   };
 
   const isAddBoneMode = tool === 'add_bone';
-  const isWeightBrushMode = tool === 'weight_brush' || mode === 'weights';
+  const isWeightBrushMode = tool === 'weight_brush' || tool === 'part_brush' || mode === 'weights';
   const hasBones = skeleton && skeleton.bones.length > 0;
 
   return (
@@ -765,6 +806,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => { if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; setDragAction(null); } }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -820,6 +862,18 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           </span>
         </div>
       </div>
+
+      {tool === 'part_brush' && <div className="absolute top-12 left-2.5 z-30 bg-slate-900/95 border border-emerald-500/40 rounded-xl p-2.5 shadow-xl flex flex-wrap items-center gap-2 text-xs text-white max-w-[calc(100vw-20px)]">
+        <span className="font-semibold" style={{color:selectedBone?.color||'#6ee7b7'}}>{selectedBone?.name || 'Select a bone'}</span>
+        <label className="flex items-center gap-1">Size
+          <input aria-label="Part brush size" type="range" min="2" max="100" value={partBrushRadius}
+            onChange={e=>studioStore.setPartBrush({partBrushRadius:Number(e.target.value)})} className="w-20 accent-emerald-400" />{partBrushRadius}px
+        </label>
+        <button onClick={()=>studioStore.setPartBrush({partBrushSmart:!partBrushSmart})}
+          className={`px-2 py-1 rounded ${partBrushSmart?'bg-emerald-600':'bg-slate-700'}`}>Find border {partBrushSmart?'On':'Off'}</button>
+        <button onClick={()=>studioStore.setPartBrush({partBrushErase:!partBrushErase})}
+          className={`px-2 py-1 rounded ${partBrushErase?'bg-orange-600':'bg-slate-700'}`}>{partBrushErase?'Erase':'Paint'}</button>
+      </div>}
 
       {/* Top Right Viewport Controls */}
       <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1 max-w-[calc(100vw-80px)]">
@@ -1307,26 +1361,13 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             <span className="hidden sm:inline">IK</span>
           </button>
 
-          <button
-            id="btn_toggle_weight_brush"
-            onClick={() => {
-              if (tool === 'weight_brush') {
-                studioStore.setTool('select');
-              } else {
-                studioStore.setTool('weight_brush');
-                studioStore.setMode('weights');
-              }
-            }}
-            disabled={!hasBones}
-            title="Toggle Weight Paint Brush"
+          <button id="btn_toggle_part_brush"
+            onClick={() => { studioStore.setMode('rig'); studioStore.setTool(tool === 'part_brush' ? 'select' : 'part_brush'); }}
+            disabled={!hasBones} title="Paint the exact shape controlled by the selected bone"
             className={`px-2 py-1 rounded-lg text-xs font-medium flex items-center gap-1 transition shrink-0 ${
-              tool === 'weight_brush' || mode === 'weights'
-                ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Paintbrush className="w-3 h-3" />
-            <span className="hidden sm:inline">Brush</span>
+              tool === 'part_brush' ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+            <Paintbrush className="w-3 h-3" /><span>Part Brush</span>
           </button>
         </div>
       </div>
