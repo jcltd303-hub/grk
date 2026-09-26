@@ -637,7 +637,7 @@ class StudioStore {
             };
           } else {
             // Generate regular triangular mesh & auto compute weights
-            mesh = generateMesh(w, h, 18, 26, alphaMask);
+            mesh = generateMesh(w, h, Math.max(18, Math.min(96, Math.ceil(w / 12))), Math.max(26, Math.min(96, Math.ceil(h / 12))), alphaMask);
             inferBoneWidthsFromMeshGeometry(mesh, skeleton);
             computeAutoWeights(mesh, skeleton);
           }
@@ -746,7 +746,7 @@ class StudioStore {
       const h = img.naturalHeight || img.height;
 
       const alphaMask = extractAlphaMask(img);
-      const mesh = generateMesh(w, h, 18, 26, alphaMask);
+      const mesh = generateMesh(w, h, Math.max(18, Math.min(96, Math.ceil(w / 12))), Math.max(26, Math.min(96, Math.ceil(h / 12))), alphaMask);
       const { skeleton, restSkeleton } = autoRig(mesh, w, h, alphaMask);
 
       const clips = getDefaultAnimationClips('human');
@@ -862,7 +862,7 @@ class StudioStore {
     if (![leftBoneId, rightBoneId].every(id => skeleton.bones.some(b => b.id === id))) {
       throw new Error('Choose a bone for each side of the cut.');
     }
-    const result = cutMesh(mesh, start, end, leftBoneId, rightBoneId);
+    const result = cutMesh(mesh, start, end, leftBoneId, rightBoneId, this.state.alphaMask ?? undefined);
     this.saveHistory();
     this.setState({ mesh: result, tool: 'select' });
     this.updateDeformedMesh();

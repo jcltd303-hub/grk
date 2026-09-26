@@ -106,3 +106,35 @@ test('a bone assigned no visible pixels does not retain an oversized provisional
   assert.equal(bones[1].startWidth, 2);
   assert.equal(bones[1].endWidth, 2);
 });
+
+test('recomputing envelopes after moving a bone covers the complete silhouette', () => {
+  const width=80, height=70, alpha=new Uint8Array(width*height);
+  for(let y=10;y<60;y++) for(let x=28;x<52;x++) alpha[y*width+x]=255;
+  const bones: Skeleton['bones']=[
+    {id:'root',name:'Root',parentId:null,localAngle:Math.PI/2,length:25,color:'#fff',start:{x:40,y:10},end:{x:40,y:35},worldAngle:Math.PI/2},
+    {id:'child',name:'Child',parentId:'root',localAngle:0,length:25,color:'#fff',start:{x:40,y:35},end:{x:40,y:60},worldAngle:Math.PI/2},
+  ];
+  const skeleton:Skeleton={bones,rootId:'root',rootPos:{x:40,y:10},restRootPos:{x:40,y:10},restBones:{}};
+  fitEnvelopesToAlpha(skeleton,alpha,width,height);
+  skeleton.rootPos={x:36,y:10}; updateWorldTransforms(skeleton);
+  fitEnvelopesToAlpha(skeleton,alpha,width,height);
+  for(let y=10;y<60;y++) for(let x=28;x<52;x++) assert.ok(bones.some(b=>{
+    const dx=b.end.x-b.start.x,dy=b.end.y-b.start.y;
+    const t=Math.max(0,Math.min(1,((x-b.start.x)*dx+(y-b.start.y)*dy)/(dx*dx+dy*dy)));
+    return Math.hypot(x-b.start.x-t*dx,y-b.start.y-t*dy)<=(b.startWidth!*(1-t)+b.endWidth!*t)/2+0.01;
+  }),`uncovered ${x},${y}`);
+});
+
+test('width fitting is root first regardless of stored bone order', () => {
+  const alpha=new Uint8Array(50*50);
+  for(let y=19;y<=31;y++) for(let x=5;x<=45;x++) alpha[y*50+x]=255;
+  const make=():Skeleton=>({bones:[
+    {id:'root',name:'Root',parentId:null,localAngle:0,length:25,color:'#fff',start:{x:5,y:25},end:{x:30,y:25},worldAngle:0},
+    {id:'child',name:'Child',parentId:'root',localAngle:0,length:25,color:'#fff',start:{x:5,y:25},end:{x:30,y:25},worldAngle:0},
+  ],rootId:'root',rootPos:{x:5,y:25},restRootPos:{x:5,y:25},restBones:{}});
+  const a=make(), b=make(); b.bones.reverse();
+  fitEnvelopesToAlpha(a,alpha,50,50); fitEnvelopesToAlpha(b,alpha,50,50);
+  for(const bone of a.bones){const other=b.bones.find(v=>v.id===bone.id)!;
+    assert.equal(bone.startWidth,other.startWidth);assert.equal(bone.endWidth,other.endWidth);
+  }
+});

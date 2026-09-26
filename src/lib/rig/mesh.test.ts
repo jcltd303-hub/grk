@@ -162,3 +162,13 @@ test('weights remain local to the fitted envelope away from joints', () => {
   const vertex = mesh.vertices.find(v => v.originalX === 150 && v.originalY === 50)!;
   assert.deepEqual(vertex.weights, [{ boneId: 'child', weight: 1 }]);
 });
+
+test('mesh covers isolated opaque pixels even when no grid vertex is nearby', () => {
+  const alpha=new Uint8Array(100*100); alpha[50*100+50]=255;
+  const mesh=generateMesh(100,100,2,2,alpha);
+  assert.ok(mesh.triangles.some(tri=>{
+    const p=tri.map(i=>mesh.vertices[i]);
+    const [a,b,c]=p; const cross=(u:typeof a,v:typeof a)=> (u.originalX-50)*(v.originalY-50)-(u.originalY-50)*(v.originalX-50);
+    return cross(a,b)>=-1e-6&&cross(b,c)>=-1e-6&&cross(c,a)>=-1e-6;
+  }));
+});

@@ -44,3 +44,12 @@ test('slanted seam intersects and splits triangles without degenerate geometry',
     assert.equal(q.cutBoneId, r.cutBoneId);
   }
 });
+
+test('shape guided cut follows a transparent valley while separating the two bones', () => {
+  const w=100,h=100,alpha=new Uint8Array(w*h).fill(255);
+  for(let y=10;y<90;y++) for(let x=0;x<w;x++) if(Math.abs(x-(50+6*Math.sin(Math.PI*(y-10)/80)))<=1) alpha[y*w+x]=0;
+  const mesh=cutMesh(generateMesh(w,h,10,10),{x:50,y:10},{x:50,y:90},'left','right',alpha);
+  const seam=mesh.vertices.filter(v=>v.originalY>35&&v.originalY<65&&Math.abs(v.originalX-50)>2);
+  assert.ok(seam.some(v=>Math.abs(v.originalX-56)<2), 'seam should follow the alpha valley');
+  assert.ok(mesh.triangles.every(tri=>new Set(tri.map(i=>mesh.vertices[i].cutBoneId)).size===1));
+});

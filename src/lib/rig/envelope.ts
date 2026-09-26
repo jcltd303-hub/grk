@@ -10,9 +10,22 @@ export function fitEnvelopesToAlpha(
   insetTips = false
 ): void {
   if (!alpha || alpha.length !== width * height || !skeleton.bones.length) return;
+  const byId = new Map(skeleton.bones.map(b => [b.id, b]));
+  const depth = (bone: typeof skeleton.bones[number]): number => {
+    let current = bone, result = 0;
+    const visited = new Set<string>([bone.id]);
+    while (current.parentId && byId.has(current.parentId) && !visited.has(current.parentId)) {
+      current = byId.get(current.parentId)!;
+      visited.add(current.id);
+      result++;
+    }
+    return result;
+  };
+  const ordered = [...skeleton.bones].sort((a,b) => depth(a)-depth(b) || a.id.localeCompare(b.id));
+
 
   if (insetTips) {
-    for (const bone of skeleton.bones) {
+    for (const bone of ordered) {
       if (skeleton.bones.some((child) => child.parentId === bone.id) || bone.length < 8) continue;
       const dx = (bone.end.x - bone.start.x) / bone.length;
       const dy = (bone.end.y - bone.start.y) / bone.length;
@@ -48,7 +61,7 @@ export function fitEnvelopesToAlpha(
     let nearest: typeof skeleton.bones[number] | undefined;
     let nearestDistance = Infinity;
     let nearestT = 0;
-    for (const bone of skeleton.bones) {
+    for (const bone of ordered) {
       const dx = bone.end.x - bone.start.x;
       const dy = bone.end.y - bone.start.y;
       const lengthSq = dx * dx + dy * dy;
@@ -64,7 +77,7 @@ export function fitEnvelopesToAlpha(
     }
   }
 
-  for (const bone of skeleton.bones) {
+  for (const bone of ordered) {
     const sample = required.get(bone.id)!;
     const largest = Math.max(...sample);
     if (largest === 0) {

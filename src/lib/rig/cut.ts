@@ -1,12 +1,39 @@
 import type { Point2D, RigMesh, Triangle, Vertex } from './types';
 
 /** Split textured triangles at a straight seam. Each side gets its own seam vertices. */
-export function cutMesh(mesh: RigMesh, start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string): RigMesh {
+export function cutMesh(mesh: RigMesh, start: Point2D, end: Point2D, leftBoneId: string, rightBoneId: string, alpha?: Uint8Array): RigMesh {
   if (mesh.cut) throw new Error('This artwork already has a cut. Undo it before drawing another.');
   const length = Math.hypot(end.x - start.x, end.y - start.y);
   if (length < 4 || leftBoneId === rightBoneId) throw new Error('Draw a longer line and choose two different bones.');
-  const signed = (v: Pick<Vertex, 'originalX' | 'originalY'>) =>
-    ((end.x - start.x) * (v.originalY - start.y) - (end.y - start.y) * (v.originalX - start.x)) / length;
+  const nx = -(end.y - start.y) / length, ny = (end.x - start.x) / length;
+  const path: Point2D[] = [start];
+  if (alpha && alpha.length === mesh.width * mesh.height) {
+    const steps = Math.max(2, Math.ceil(length / 3));
+    const range = Math.min(12, Math.max(3, length * 0.12));
+    let previous = 0;
+    for (let step = 1; step < steps; step++) {
+      const t = step / steps;
+      const baseX = start.x + (end.x - start.x) * t;
+      const baseY = start.y + (end.y - start.y) * t;
+      let best = previous, cost = Infinity;
+      for (let offset = -range; offset <= range; offset++) {
+        const x = Math.round(baseX + nx * offset), y = Math.round(baseY + ny * offset);
+        if (x < 0 || x >= mesh.width || y < 0 || y >= mesh.height) continue;
+        const value = alpha[y * mesh.width + x] / 255;
+        const candidate = value * 16 + Math.abs(offset - previous) * 0.35 + Math.abs(offset) * 0.025;
+        if (candidate < cost) { cost = candidate; best = offset; }
+      }
+      previous = best;
+      path.push({ x: baseX + nx * best, y: baseY + ny * best });
+    }
+  }
+  path.push(end);
+  const signed = (v: Pick<Vertex, 'originalX' | 'originalY'>) => {
+    const projection = ((v.originalX-start.x)*(end.x-start.x)+(v.originalY-start.y)*(end.y-start.y))/(length*length);
+    const segment = Math.min(path.length-2,Math.max(0,Math.floor(projection*(path.length-1))));
+    const a=path[segment], b=path[segment+1];
+    return ((b.x-a.x)*(v.originalY-a.y)-(b.y-a.y)*(v.originalX-a.x))/Math.hypot(b.x-a.x,b.y-a.y);
+  };
   const vertices: Vertex[] = [];
   const triangles: Triangle[] = [];
   const keys = new Map<string, number>();
@@ -30,7 +57,14 @@ export function cutMesh(mesh: RigMesh, start: Point2D, end: Point2D, leftBoneId:
         const b = corners[(i + 1) % 3];
         if (a.distance >= -1e-7) polygon.push(a);
         if (a.distance * b.distance < -1e-12) {
-          const t = a.distance / (a.distance - b.distance);
+          let lo = 0, hi = 1;
+          for (let iteration = 0; iteration < 24; iteration++) {
+            const mid = (lo + hi) / 2;
+            const point = { originalX: a.vertex.originalX + (b.vertex.originalX-a.vertex.originalX)*mid,
+              originalY: a.vertex.originalY + (b.vertex.originalY-a.vertex.originalY)*mid };
+            if (signed(point) * side * a.distance >= 0) lo = mid; else hi = mid;
+          }
+          const t = (lo + hi) / 2;
           const av = a.vertex, bv = b.vertex;
           const originalX = av.originalX + (bv.originalX - av.originalX) * t;
           const originalY = av.originalY + (bv.originalY - av.originalY) * t;

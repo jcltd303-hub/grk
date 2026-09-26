@@ -26,30 +26,9 @@ export function generateMesh(
       const u = c / columns;
       const v = r / rows;
 
-      // Check alpha mask if provided
-      let keep = true;
-      if (alphaMask) {
-        const px = Math.min(width - 1, Math.floor(x));
-        const py = Math.min(height - 1, Math.floor(y));
-        const alpha = alphaMask[py * width + px];
-        // Keep vertex if near or inside opaque areas
-        if (alpha < 15) {
-          // Check small radius around for boundary safety
-          let hasNearbyAlpha = false;
-          const searchRadius = 6;
-          for (let sy = -searchRadius; sy <= searchRadius && !hasNearbyAlpha; sy += 3) {
-            for (let sx = -searchRadius; sx <= searchRadius; sx += 3) {
-              const nx = Math.max(0, Math.min(width - 1, px + sx));
-              const ny = Math.max(0, Math.min(height - 1, py + sy));
-              if (alphaMask[ny * width + nx] >= 20) {
-                hasNearbyAlpha = true;
-                break;
-              }
-            }
-          }
-          keep = hasNearbyAlpha;
-        }
-      }
+      // Keep a complete grid: pruning corners by sampled alpha used to
+      // discard whole cells containing thin limbs or softened cutout edges.
+      const keep = true;
 
       if (keep) {
         const index = vertices.length;
@@ -67,9 +46,24 @@ export function generateMesh(
     }
   }
 
+  // Prefix sum makes the per-cell alpha occupancy check exact and cheap.
+  const stride = width + 1;
+  const occupied = alphaMask && alphaMask.length === width * height ? new Int32Array((width + 1) * (height + 1)) : null;
+  if (occupied) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const at=(y+1)*stride+x+1;
+    occupied[at]=(alphaMask![y*width+x]>=20 ? 1 : 0)+occupied[at-1]+occupied[at-stride]-occupied[at-stride-1];
+  }
+  const cellVisible = (c: number, r: number) => {
+    if (!occupied) return true;
+    const x0=Math.floor(c*dx), x1=Math.min(width,Math.ceil((c+1)*dx));
+    const y0=Math.floor(r*dy), y1=Math.min(height,Math.ceil((r+1)*dy));
+    return occupied[y1*stride+x1]-occupied[y0*stride+x1]-occupied[y1*stride+x0]+occupied[y0*stride+x0]>0;
+  };
+
   // Generate triangles for each quad cell
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < columns; c++) {
+      if (!cellVisible(c, r)) continue;
       const topLeft = gridMap.get(`${c},${r}`);
       const topRight = gridMap.get(`${c + 1},${r}`);
       const bottomLeft = gridMap.get(`${c},${r + 1}`);
@@ -84,8 +78,15 @@ export function generateMesh(
     }
   }
 
+  const used = new Map<number, number>();
+  const activeVertices: Vertex[] = [];
+  for (const tri of triangles) for (let i = 0; i < 3; i++) {
+    const old = tri[i];
+    if (!used.has(old)) { used.set(old, activeVertices.length); activeVertices.push(vertices[old]); }
+    tri[i] = used.get(old)!;
+  }
   return {
-    vertices,
+    vertices: activeVertices,
     triangles,
     width,
     height,
