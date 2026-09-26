@@ -78,12 +78,14 @@ export function fitEnvelopesToAlpha(
   }
 
   for (const bone of ordered) {
+    const manualStart = bone.manualStartWidth ? bone.startWidth : undefined;
+    const manualEnd = bone.manualEndWidth ? bone.endWidth : undefined;
     const sample = required.get(bone.id)!;
     const largest = Math.max(...sample);
     if (largest === 0) {
       // A bone with no assigned visible pixels should not inherit a broad
       // provisional mesh width and overlap neighboring artwork.
-      bone.startWidth = bone.endWidth = 2;
+      bone.startWidth = manualStart ?? 2; bone.endWidth = manualEnd ?? 2;
       const rest = skeleton.restBones[bone.id];
       if (rest) { rest.startWidth = 2; rest.endWidth = 2; }
       continue;
@@ -110,8 +112,8 @@ export function fitEnvelopesToAlpha(
       else lo = a;
     }
     const startRadius = (lo + hi) / 2;
-    bone.startWidth = Math.ceil(2 * startRadius * 100) / 100;
-    bone.endWidth = Math.ceil(2 * endRadius(startRadius) * 100) / 100;
+    bone.startWidth = manualStart ?? Math.ceil(2 * startRadius * 100) / 100;
+    bone.endWidth = manualEnd ?? Math.ceil(2 * endRadius(startRadius) * 100) / 100;
     const rest = skeleton.restBones[bone.id];
     if (rest) { rest.startWidth = bone.startWidth; rest.endWidth = bone.endWidth; }
   }

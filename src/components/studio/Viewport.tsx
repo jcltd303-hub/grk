@@ -1063,12 +1063,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
               onChange={(e) =>
                 studioStore.setBoneStartWidth(selectedBone.id, Number(e.target.value))
               }
-              onInput={(e) =>
-                studioStore.setBoneStartWidth(
-                  selectedBone.id,
-                  Number((e.target as HTMLInputElement).value)
-                )
-              }
               className="w-full accent-sky-500 cursor-pointer"
             />
           </div>
@@ -1113,12 +1107,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
               value={Math.round(selectedBone.endWidth ?? 16)}
               onChange={(e) =>
                 studioStore.setBoneEndWidth(selectedBone.id, Number(e.target.value))
-              }
-              onInput={(e) =>
-                studioStore.setBoneEndWidth(
-                  selectedBone.id,
-                  Number((e.target as HTMLInputElement).value)
-                )
               }
               className="w-full accent-sky-500 cursor-pointer"
             />

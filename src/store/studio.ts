@@ -151,6 +151,7 @@ export interface StudioState {
   setBoneStartWidth: (boneId: string, width: number) => void;
   setBoneEndWidth: (boneId: string, width: number) => void;
   setBoneWidths: (boneId: string, startWidth: number, endWidth: number) => void;
+  resetBoneWidths: (boneId: string) => void;
   toggleBonePin: (boneId: string) => void;
   moveBoneJoint: (boneId: string, jointType: 'start' | 'end', newPos: Point2D) => void;
   applyIK: (effectorBoneId: string, targetPos: Point2D) => void;
@@ -251,6 +252,7 @@ class StudioStore {
       setBoneStartWidth: (id, w) => this.setBoneStartWidth(id, w),
       setBoneEndWidth: (id, w) => this.setBoneEndWidth(id, w),
       setBoneWidths: (id, w1, w2) => this.setBoneWidths(id, w1, w2),
+      resetBoneWidths: (id) => this.resetBoneWidths(id),
       toggleBonePin: (id) => this.toggleBonePin(id),
       moveBoneJoint: (id, type, pos) => this.moveBoneJoint(id, type, pos),
       addBone: (pId, endPos, startPos, opts) => this.addBone(pId, endPos, startPos, opts),
@@ -356,7 +358,7 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      this.refreshAutomaticSkinning();
+      this.refreshAutomaticSkinning(false);
     } else {
       this.updateDeformedMesh();
     }
@@ -384,7 +386,7 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      this.refreshAutomaticSkinning();
+      this.refreshAutomaticSkinning(false);
     } else {
       this.updateDeformedMesh();
     }
@@ -478,6 +480,8 @@ class StudioStore {
           color: b.color,
           startWidth: b.startWidth ?? 26,
           endWidth: b.endWidth ?? 18,
+          manualStartWidth: b.manualStartWidth,
+          manualEndWidth: b.manualEndWidth,
           minAngle: b.minAngle,
           maxAngle: b.maxAngle,
           isPinned: !!b.isPinned,
@@ -586,6 +590,8 @@ class StudioStore {
               worldAngle: typeof b.worldAngle === 'number' ? b.worldAngle : 0,
               startWidth: typeof b.startWidth === 'number' ? b.startWidth : 26,
               endWidth: typeof b.endWidth === 'number' ? b.endWidth : 18,
+              manualStartWidth: !!b.manualStartWidth,
+              manualEndWidth: !!b.manualEndWidth,
               minAngle: typeof b.minAngle === 'number' ? b.minAngle : undefined,
               maxAngle: typeof b.maxAngle === 'number' ? b.maxAngle : undefined,
               isPinned: !!b.isPinned,
@@ -951,41 +957,38 @@ class StudioStore {
   }
 
   public setBoneStartWidth(boneId: string, width: number) {
-    const { skeleton, mesh } = this.state;
-    if (!skeleton) return;
-    const bone = skeleton.bones.find((b) => b.id === boneId);
-    if (!bone) return;
-
+    if (!this.state.skeleton?.bones.some(b => b.id === boneId)) return;
+    this.saveHistory();
+    const bone = this.state.skeleton!.bones.find(b => b.id === boneId)!;
+    bone.manualStartWidth = true;
     bone.startWidth = Math.max(2, Math.min(600, Math.round(width)));
     if (this.state.restSkeleton) {
       const rb = this.state.restSkeleton.bones.find((b) => b.id === boneId);
-      if (rb) rb.startWidth = bone.startWidth;
+      if (rb) { rb.startWidth = bone.startWidth; rb.manualStartWidth = true; }
     }
 
     this.refreshAutomaticSkinning();
   }
 
   public setBoneEndWidth(boneId: string, width: number) {
-    const { skeleton, mesh } = this.state;
-    if (!skeleton) return;
-    const bone = skeleton.bones.find((b) => b.id === boneId);
-    if (!bone) return;
-
+    if (!this.state.skeleton?.bones.some(b => b.id === boneId)) return;
+    this.saveHistory();
+    const bone = this.state.skeleton!.bones.find(b => b.id === boneId)!;
+    bone.manualEndWidth = true;
     bone.endWidth = Math.max(2, Math.min(600, Math.round(width)));
     if (this.state.restSkeleton) {
       const rb = this.state.restSkeleton.bones.find((b) => b.id === boneId);
-      if (rb) rb.endWidth = bone.endWidth;
+      if (rb) { rb.endWidth = bone.endWidth; rb.manualEndWidth = true; }
     }
 
     this.refreshAutomaticSkinning();
   }
 
   public setBoneWidths(boneId: string, startWidth: number, endWidth: number) {
-    const { skeleton, mesh } = this.state;
-    if (!skeleton) return;
-    const bone = skeleton.bones.find((b) => b.id === boneId);
-    if (!bone) return;
-
+    if (!this.state.skeleton?.bones.some(b => b.id === boneId)) return;
+    this.saveHistory();
+    const bone = this.state.skeleton!.bones.find(b => b.id === boneId)!;
+    bone.manualStartWidth = bone.manualEndWidth = true;
     bone.startWidth = Math.max(2, Math.min(600, Math.round(startWidth)));
     bone.endWidth = Math.max(2, Math.min(600, Math.round(endWidth)));
     if (this.state.restSkeleton) {
@@ -993,9 +996,20 @@ class StudioStore {
       if (rb) {
         rb.startWidth = bone.startWidth;
         rb.endWidth = bone.endWidth;
+        rb.manualStartWidth = rb.manualEndWidth = true;
       }
     }
 
+    this.refreshAutomaticSkinning();
+  }
+
+  public resetBoneWidths(boneId: string) {
+    if (!this.state.skeleton?.bones.some(b => b.id === boneId)) return;
+    this.saveHistory();
+    for (const skeleton of [this.state.skeleton, this.state.restSkeleton]) {
+      const bone = skeleton?.bones.find(b => b.id === boneId);
+      if (bone) { bone.manualStartWidth = false; bone.manualEndWidth = false; }
+    }
     this.refreshAutomaticSkinning();
   }
 
@@ -1403,14 +1417,16 @@ class StudioStore {
    * Bone edits change the envelopes, so weights are refreshed automatically.
    * Animation/pose changes never invoke this path.
    */
-  private refreshAutomaticSkinning() {
+  private refreshAutomaticSkinning(refitWidths = true) {
     const { mesh, skeleton, restSkeleton, alphaMask } = this.state;
     if (!mesh || !skeleton) return;
 
     const bindSkeleton = restSkeleton ?? skeleton;
     updateWorldTransforms(bindSkeleton);
-    inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
-    fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
+    if (refitWidths) {
+      if (!alphaMask || alphaMask.length !== mesh.width * mesh.height) inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
+      fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
+    }
     computeAutoWeights(mesh, bindSkeleton);
     for (const vertex of mesh.vertices) {
       if (vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
@@ -1424,6 +1440,8 @@ class StudioStore {
       if (bindBone) {
         bone.startWidth = bindBone.startWidth;
         bone.endWidth = bindBone.endWidth;
+        bone.manualStartWidth = bindBone.manualStartWidth;
+        bone.manualEndWidth = bindBone.manualEndWidth;
       }
     }
     if (restSkeleton && restSkeleton !== bindSkeleton) {

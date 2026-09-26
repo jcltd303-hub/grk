@@ -15,6 +15,8 @@ export interface Bone {
   // Bone Envelopes / Widths (in pixels)
   startWidth?: number; // width/influence at root/start joint
   endWidth?: number;   // width/influence at tip/end joint
+  manualStartWidth?: boolean;
+  manualEndWidth?: boolean;
 
   // World coordinates (computed each frame)
   start: Point2D;
@@ -127,6 +129,8 @@ export interface RigExportJSON {
       color: string;
       startWidth?: number;
       endWidth?: number;
+      manualStartWidth?: boolean;
+      manualEndWidth?: boolean;
       minAngle?: number;
       maxAngle?: number;
       isPinned?: boolean;
