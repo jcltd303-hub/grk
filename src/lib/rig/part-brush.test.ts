@@ -43,3 +43,16 @@ test('part ownership rejects corrupt serialized runs',()=>{
   assert.throws(()=>decodeOwnership({width:4,height:4,boneIds:['a'],runs:[1,15]}));
   assert.throws(()=>decodeOwnership({width:4,height:4,boneIds:['a'],runs:[2,16]}));
 });
+
+test('manual width changes automatic exclusive pixel ownership', () => {
+  const alpha=new Uint8Array(40*40).fill(255);
+  const skeleton={bones:[
+    {id:'upper',start:{x:5,y:12},end:{x:35,y:12},startWidth:4,endWidth:4},
+    {id:'lower',start:{x:5,y:28},end:{x:35,y:28},startWidth:4,endWidth:4},
+  ]} as unknown as Skeleton;
+  const before=createPartOwnership(skeleton,alpha,40,40);
+  assert.equal(before.boneIds[before.pixels[19*40+20]-1],'upper');
+  skeleton.bones[1].startWidth=40; skeleton.bones[1].endWidth=40;
+  const after=createPartOwnership(skeleton,alpha,40,40);
+  assert.equal(after.boneIds[after.pixels[19*40+20]-1],'lower');
+});

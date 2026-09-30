@@ -15,6 +15,7 @@ export interface Bone {
   // Bone Envelopes / Widths (in pixels)
   startWidth?: number; // width/influence at root/start joint
   endWidth?: number;   // width/influence at tip/end joint
+  widthProfile?: number[]; // local silhouette widths along the bone
   manualStartWidth?: boolean;
   manualEndWidth?: boolean;
 
@@ -129,6 +130,7 @@ export interface RigExportJSON {
       color: string;
       startWidth?: number;
       endWidth?: number;
+      widthProfile?: number[];
       manualStartWidth?: boolean;
       manualEndWidth?: boolean;
       minAngle?: number;

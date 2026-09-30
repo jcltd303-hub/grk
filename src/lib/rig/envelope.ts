@@ -1,5 +1,6 @@
 import type { Skeleton } from './types';
 import { updateWorldTransforms } from './skeleton';
+import type { PartOwnership } from './part-brush';
 
 /** Fit the actual opaque pixels, including features missed by the sparse mesh. */
 export function fitEnvelopesToAlpha(
@@ -7,7 +8,8 @@ export function fitEnvelopesToAlpha(
   alpha: Uint8Array | null | undefined,
   width: number,
   height: number,
-  insetTips = false
+  insetTips = false,
+  ownership?: PartOwnership | null
 ): void {
   if (!alpha || alpha.length !== width * height || !skeleton.bones.length) return;
   const byId = new Map(skeleton.bones.map(b => [b.id, b]));
@@ -61,7 +63,10 @@ export function fitEnvelopesToAlpha(
     let nearest: typeof skeleton.bones[number] | undefined;
     let nearestDistance = Infinity;
     let nearestT = 0;
+    const paintedId = ownership?.width === width && ownership.height === height
+      ? ownership.boneIds[ownership.pixels[y * width + x] - 1] : undefined;
     for (const bone of ordered) {
+      if (paintedId && bone.id !== paintedId) continue;
       const dx = bone.end.x - bone.start.x;
       const dy = bone.end.y - bone.start.y;
       const lengthSq = dx * dx + dy * dy;
@@ -81,40 +86,44 @@ export function fitEnvelopesToAlpha(
     const manualStart = bone.manualStartWidth ? bone.startWidth : undefined;
     const manualEnd = bone.manualEndWidth ? bone.endWidth : undefined;
     const sample = required.get(bone.id)!;
+    // Local measurements follow the silhouette without extending a narrow
+    // protrusion's width along the entire bone. Include adjacent bins at
+    // boundaries so interpolation cannot leave a sampled pixel uncovered.
+    const profile = Array.from(sample, (radius, i) => Math.max(1,
+      radius, sample[Math.max(0, i - 1)], sample[Math.min(bins - 1, i + 1)]) * 2);
+    bone.widthProfile = profile;
     const largest = Math.max(...sample);
     if (largest === 0) {
       // A bone with no assigned visible pixels should not inherit a broad
       // provisional mesh width and overlap neighboring artwork.
       bone.startWidth = manualStart ?? 2; bone.endWidth = manualEnd ?? 2;
+      bone.widthProfile = new Array(bins).fill(2);
       const rest = skeleton.restBones[bone.id];
       if (rest) { rest.startWidth = 2; rest.endWidth = 2; }
       continue;
     }
-    // A linear taper must contain each occupied bin at both bin boundaries.
-    // Minimize the sum of endpoint radii, which also reduces needless overlap.
-    const constraints: Array<{ t: number; radius: number }> = [];
-    sample.forEach((radius, i) => {
-      if (radius <= 0) return;
-      constraints.push({ t: i / bins, radius }, { t: (i + 1) / bins, radius });
-    });
-    const endRadius = (startRadius: number) => constraints.reduce((radius, point) =>
-      point.t === 0
-        ? (startRadius + 1e-7 < point.radius ? Infinity : radius)
-        : Math.max(radius, (point.radius - (1 - point.t) * startRadius) / point.t), 1);
-    let lo = Math.max(1, ...constraints.filter(c => c.t === 0).map(c => c.radius));
-    // The optimal start radius may exceed the widest sample slightly: the
-    // first bin must stay covered through its far boundary while the tip tapers.
-    let hi = Math.max(lo, largest * 2);
-    for (let i = 0; i < 42; i++) {
-      const a = lo + (hi - lo) / 3;
-      const b = hi - (hi - lo) / 3;
-      if (a + endRadius(a) < b + endRadius(b)) hi = b;
-      else lo = a;
-    }
-    const startRadius = (lo + hi) / 2;
-    bone.startWidth = manualStart ?? Math.ceil(2 * startRadius * 100) / 100;
-    bone.endWidth = manualEnd ?? Math.ceil(2 * endRadius(startRadius) * 100) / 100;
+    bone.startWidth = manualStart ?? Math.ceil(profile[0] * 100) / 100;
+    bone.endWidth = manualEnd ?? Math.ceil(profile[bins - 1] * 100) / 100;
     const rest = skeleton.restBones[bone.id];
     if (rest) { rest.startWidth = bone.startWidth; rest.endWidth = bone.endWidth; }
+  }
+
+  // Envelopes meet at a shared pivot even though pixel ownership is exclusive.
+  for (const parent of ordered) {
+    const children = ordered.filter(child => child.parentId === parent.id);
+    if (!children.length) continue;
+    const jointWidth = Math.max(parent.endWidth ?? 2, ...children.map(c => c.startWidth ?? 2));
+    if (!parent.manualEndWidth) {
+      parent.endWidth = jointWidth;
+      if (parent.widthProfile) parent.widthProfile[parent.widthProfile.length - 1] = jointWidth;
+    }
+    for (const child of children) if (!child.manualStartWidth) {
+      child.startWidth = jointWidth;
+      if (child.widthProfile) child.widthProfile[0] = jointWidth;
+    }
+    for (const bone of [parent, ...children]) {
+      const rest = skeleton.restBones[bone.id];
+      if (rest) { rest.startWidth = bone.startWidth; rest.endWidth = bone.endWidth; }
+    }
   }
 }

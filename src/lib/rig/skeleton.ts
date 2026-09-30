@@ -123,6 +123,7 @@ export function cloneSkeleton(skel: Skeleton): Skeleton {
       ...b,
       start: { ...b.start },
       end: { ...b.end },
+      widthProfile: b.widthProfile ? [...b.widthProfile] : undefined,
     })),
     rootId: skel.rootId,
     rootPos: { ...skel.rootPos },

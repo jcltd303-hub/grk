@@ -510,6 +510,7 @@ class StudioStore {
           color: b.color,
           startWidth: b.startWidth ?? 26,
           endWidth: b.endWidth ?? 18,
+          widthProfile: b.widthProfile,
           manualStartWidth: b.manualStartWidth,
           manualEndWidth: b.manualEndWidth,
           minAngle: b.minAngle,
@@ -621,6 +622,7 @@ class StudioStore {
               worldAngle: typeof b.worldAngle === 'number' ? b.worldAngle : 0,
               startWidth: typeof b.startWidth === 'number' ? b.startWidth : 26,
               endWidth: typeof b.endWidth === 'number' ? b.endWidth : 18,
+              widthProfile: Array.isArray(b.widthProfile) && b.widthProfile.length <= 128 && b.widthProfile.every((v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0) ? b.widthProfile : undefined,
               manualStartWidth: !!b.manualStartWidth,
               manualEndWidth: !!b.manualEndWidth,
               minAngle: typeof b.minAngle === 'number' ? b.minAngle : undefined,
@@ -1516,12 +1518,15 @@ class StudioStore {
     updateWorldTransforms(bindSkeleton);
     if (refitWidths) {
       if (!alphaMask || alphaMask.length !== mesh.width * mesh.height) inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
-      fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
+      fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height, false, this.state.partOwnership);
     }
     computeAutoWeights(mesh, bindSkeleton);
-    if (this.state.partOwnership) applyPartWeights(mesh, this.state.partOwnership, bindSkeleton);
+    if (alphaMask?.length === mesh.width * mesh.height && bindSkeleton.bones.length) {
+      const ownership = this.state.partOwnership ?? createPartOwnership(bindSkeleton, alphaMask, mesh.width, mesh.height);
+      applyPartWeights(mesh, ownership, bindSkeleton);
+    }
     for (const vertex of mesh.vertices) {
-      if (!this.state.partOwnership && vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
+      if (!alphaMask && !this.state.partOwnership && vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
         vertex.weights = [{ boneId: vertex.cutBoneId, weight: 1 }];
       }
     }
@@ -1532,6 +1537,7 @@ class StudioStore {
       if (bindBone) {
         bone.startWidth = bindBone.startWidth;
         bone.endWidth = bindBone.endWidth;
+        bone.widthProfile = bindBone.widthProfile ? [...bindBone.widthProfile] : undefined;
         bone.manualStartWidth = bindBone.manualStartWidth;
         bone.manualEndWidth = bindBone.manualEndWidth;
       }

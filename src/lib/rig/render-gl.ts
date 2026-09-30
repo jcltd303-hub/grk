@@ -363,6 +363,28 @@ function drawSkeleton(ctx: CanvasRenderingContext2D, skeleton: Skeleton, options
 
       // Perfectly symmetric bounding capsule / trapezoid envelope
       ctx.beginPath();
+      const profile = !bone.manualStartWidth && !bone.manualEndWidth && bone.widthProfile?.length
+        ? bone.widthProfile : null;
+      if (profile) {
+        const segment = (index: number, side: number) => {
+          const t = index / profile.length;
+          const r = profile[Math.min(index, profile.length - 1)] / 2;
+          return { x: bone.start.x + dx * t + nx * r * side,
+            y: bone.start.y + dy * t + ny * r * side };
+        };
+        const first = segment(0, 1);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i <= profile.length; i++) {
+          const p = segment(i, 1); ctx.lineTo(p.x, p.y);
+        }
+        ctx.arc(bone.end.x, bone.end.y, profile[profile.length - 1] / 2,
+          boneAngle + Math.PI / 2, boneAngle - Math.PI / 2, true);
+        for (let i = profile.length; i >= 0; i--) {
+          const p = segment(i, -1); ctx.lineTo(p.x, p.y);
+        }
+        ctx.arc(bone.start.x, bone.start.y, profile[0] / 2,
+          boneAngle - Math.PI / 2, boneAngle + Math.PI / 2, true);
+      } else {
       ctx.moveTo(sl_x, sl_y);
       ctx.lineTo(el_x, el_y);
       // End cap arc around end node center from left through tip to right
@@ -370,6 +392,7 @@ function drawSkeleton(ctx: CanvasRenderingContext2D, skeleton: Skeleton, options
       ctx.lineTo(sr_x, sr_y);
       // Start cap arc around start node center from right through back to left
       ctx.arc(bone.start.x, bone.start.y, sw2, boneAngle - Math.PI / 2, boneAngle + Math.PI / 2, true);
+      }
       ctx.closePath();
 
       ctx.fillStyle = isSelected

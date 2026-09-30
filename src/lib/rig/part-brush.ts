@@ -25,7 +25,11 @@ export function createPartOwnership(skeleton: Skeleton, alpha: Uint8Array, width
       const b = skeleton.bones[i], dx = b.end.x - b.start.x, dy = b.end.y - b.start.y;
       const t = Math.max(0, Math.min(1, ((x-b.start.x)*dx+(y-b.start.y)*dy)/Math.max(1e-8,dx*dx+dy*dy)));
       const d = Math.hypot(x-b.start.x-t*dx,y-b.start.y-t*dy);
-      if (d < best) { best = d; pixels[at] = i + 1; }
+      const widthAt = b.widthProfile && !b.manualStartWidth && !b.manualEndWidth
+        ? b.widthProfile[Math.min(b.widthProfile.length-1, Math.floor(t*b.widthProfile.length))]
+        : (b.startWidth ?? 16)*(1-t)+(b.endWidth ?? 16)*t;
+      const score = d / Math.max(1, widthAt / 2);
+      if (score < best) { best = score; pixels[at] = i + 1; }
     }
   }
   return { width, height, boneIds: skeleton.bones.map(b => b.id), pixels, revision: 0 };

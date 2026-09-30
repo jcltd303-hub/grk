@@ -277,14 +277,8 @@ export const Studio: React.FC = () => {
 
         {/* Mobile Slide-Over Drawer Sidebar */}
         {isSidebarOpen && (
-          <div className="md:hidden fixed inset-0 z-40 flex">
-            {/* Backdrop */}
-            <div
-              className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs transition-opacity"
-              onClick={() => setIsSidebarOpen(false)}
-            />
-            {/* Drawer Content */}
-            <div className="relative z-50 h-full max-w-[85vw] shadow-2xl animate-in slide-in-from-left duration-200">
+          <div className="md:hidden absolute inset-x-0 bottom-0 z-40 pointer-events-none">
+            <div className="relative pointer-events-auto h-[min(52dvh,430px)] w-full overflow-hidden rounded-t-2xl border-t border-sky-500/40 shadow-2xl bg-slate-900">
               <Sidebar
                 onOpenUploadModal={() => {
                   setIsUploadOpen(true);

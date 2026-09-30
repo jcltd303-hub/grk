@@ -150,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
   };
 
   return (
-    <aside className="w-72 sm:w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col z-10 shrink-0 text-slate-200">
+    <aside className="w-full md:w-80 h-full bg-slate-900 border-r border-slate-800 flex flex-col z-10 shrink-0 text-slate-200">
       {/* Panel Header with Close for Mobile */}
       <div className="p-3 border-b border-slate-800 flex items-center justify-between">
         <span className="text-xs font-semibold text-white flex items-center gap-1.5">
@@ -167,6 +167,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
           </button>
         )}
       </div>
+
+      {selectedBone && (
+        <div className="md:hidden px-3 py-2 border-b border-slate-700 space-y-1.5 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold text-sky-300 flex-1">{selectedBone.name}</span>
+            <button onClick={() => studioStore.resetBoneWidths(selectedBone.id)}
+              className="rounded bg-sky-900 px-3 py-1.5 text-sky-200">Fit widths</button>
+          </div>
+          <label className="flex items-center gap-2">Pivot
+            <input aria-label="Pivot width" type="range" min="2"
+              max={Math.max(400, Math.ceil((selectedBone.startWidth ?? 2) * 1.25))}
+              className="min-w-0 flex-1 h-7 accent-sky-500 touch-pan-x"
+              value={Math.round(selectedBone.startWidth ?? 2)}
+              onChange={e => studioStore.setBoneStartWidth(selectedBone.id, Number(e.target.value))} />
+            <span className="w-10 text-right font-mono">{Math.round(selectedBone.startWidth ?? 2)}</span>
+          </label>
+          <label className="flex items-center gap-2">Tip
+            <input aria-label="Tip width" type="range" min="2"
+              max={Math.max(400, Math.ceil((selectedBone.endWidth ?? 2) * 1.25))}
+              className="min-w-0 flex-1 h-7 accent-sky-500 touch-pan-x"
+              value={Math.round(selectedBone.endWidth ?? 2)}
+              onChange={e => studioStore.setBoneEndWidth(selectedBone.id, Number(e.target.value))} />
+            <span className="w-10 text-right font-mono">{Math.round(selectedBone.endWidth ?? 2)}</span>
+          </label>
+        </div>
+      )}
 
       {/* Mode Switcher */}
       <div className="p-2 border-b border-slate-800 bg-slate-950/40">
