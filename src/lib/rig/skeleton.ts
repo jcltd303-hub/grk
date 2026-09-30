@@ -41,6 +41,24 @@ export function updateWorldTransforms(skeleton: Skeleton): void {
   skeleton.bones.forEach((b) => visit(b.id));
 }
 
+/** Stable hierarchy order for fitting and automatic pixel assignment. */
+export function bonesRootFirst(skeleton: Skeleton): Bone[] {
+  const byId = new Map(skeleton.bones.map(b => [b.id, b]));
+  const depths = new Map<string, number>();
+  const depth = (bone: Bone, visiting = new Set<string>()): number => {
+    if (depths.has(bone.id)) return depths.get(bone.id)!;
+    if (visiting.has(bone.id)) return 0;
+    visiting.add(bone.id);
+    const parent = bone.parentId && byId.get(bone.parentId);
+    const result = parent ? depth(parent, visiting) + 1 : 0;
+    visiting.delete(bone.id);
+    depths.set(bone.id, result);
+    return result;
+  };
+  return [...skeleton.bones].sort((a,b) => depth(a) - depth(b)
+    || (a.id === skeleton.rootId ? -1 : b.id === skeleton.rootId ? 1 : a.id.localeCompare(b.id)));
+}
+
 export interface BoneTransformMatrix {
   cos: number;
   sin: number;

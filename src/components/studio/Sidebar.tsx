@@ -396,7 +396,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                 <span className="text-xs font-semibold text-emerald-300">Automatic Skinning</span>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                GRK derives bone envelopes and normalized vertex influences directly from the artwork geometry. No weight painting is required.
+                Recalculate every bone from the root down. Each visible pixel has one owner; painted parts keep their chosen owner.
               </p>
               <button
                 id="btn_auto_skin_geometry"
@@ -405,11 +405,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                 className="w-full py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 disabled:opacity-30 disabled:pointer-events-none text-emerald-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                Rebuild Automatic Skin
+                Rebuild Root → Tips
               </button>
               <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500">
-                <span>✓ Geometry widths</span><span>✓ 4-way influences</span>
-                <span>✓ Joint blending</span><span>✓ Normalized weights</span>
+                <span>✓ Local widths</span><span>✓ One owner per pixel</span>
+                <span>✓ Shared joint envelopes</span><span>✓ Undoable rebuild</span>
               </div>
             </div>
 

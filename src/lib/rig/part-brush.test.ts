@@ -56,3 +56,12 @@ test('manual width changes automatic exclusive pixel ownership', () => {
   const after=createPartOwnership(skeleton,alpha,40,40);
   assert.equal(after.boneIds[after.pixels[19*40+20]-1],'lower');
 });
+
+test('automatic ownership resolves identical bones root first regardless of array order', () => {
+  const root={id:'root',name:'Root',parentId:null,localAngle:0,length:20,color:'#fff',start:{x:2,y:10},end:{x:22,y:10},worldAngle:0,startWidth:12,endWidth:12};
+  const child={...root,id:'child',name:'Child',parentId:'root'};
+  const skeleton={bones:[child,root],rootId:'root',rootPos:{x:2,y:10},restRootPos:{x:2,y:10},restBones:{}} as Skeleton;
+  const alpha=new Uint8Array(25*20).fill(255);
+  const ownership=createPartOwnership(skeleton,alpha,25,20);
+  assert.equal(ownership.boneIds[ownership.pixels[10*25+12]-1],'root');
+});

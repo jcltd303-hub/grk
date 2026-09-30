@@ -1,3 +1,4 @@
+import { bonesRootFirst } from './skeleton';
 import { RigMesh, Skeleton, Triangle, Vertex } from './types';
 import { distToSegment } from './math';
 
@@ -106,7 +107,7 @@ export function computeAutoWeights(
 ): void {
   if (mesh.vertices.length === 0 || skeleton.bones.length === 0) return;
 
-  const bones = skeleton.bones;
+  const bones = bonesRootFirst(skeleton);
   const safePower = Math.max(1.5, power);
   const influenceLimit = Math.max(1, Math.min(8, Math.floor(maxInfluencesPerVertex)));
   const byId = new Map(bones.map(bone => [bone.id, bone]));

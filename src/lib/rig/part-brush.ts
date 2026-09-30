@@ -1,4 +1,5 @@
 import type { Point2D, Skeleton } from './types';
+import { bonesRootFirst } from './skeleton';
 
 export interface PartOwnership {
   width: number;
@@ -17,12 +18,13 @@ export interface SerializedPartOwnership {
 export function createPartOwnership(skeleton: Skeleton, alpha: Uint8Array, width: number, height: number): PartOwnership {
   if (alpha.length !== width * height || skeleton.bones.length > 65534) throw new Error('Invalid artwork or bone count.');
   const pixels = new Uint16Array(alpha.length);
+  const bones = bonesRootFirst(skeleton);
   for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
     const at = y * width + x;
     if (alpha[at] < 20) continue;
     let best = Infinity;
-    for (let i = 0; i < skeleton.bones.length; i++) {
-      const b = skeleton.bones[i], dx = b.end.x - b.start.x, dy = b.end.y - b.start.y;
+    for (let i = 0; i < bones.length; i++) {
+      const b = bones[i], dx = b.end.x - b.start.x, dy = b.end.y - b.start.y;
       const t = Math.max(0, Math.min(1, ((x-b.start.x)*dx+(y-b.start.y)*dy)/Math.max(1e-8,dx*dx+dy*dy)));
       const d = Math.hypot(x-b.start.x-t*dx,y-b.start.y-t*dy);
       const widthAt = b.widthProfile && !b.manualStartWidth && !b.manualEndWidth
@@ -32,7 +34,7 @@ export function createPartOwnership(skeleton: Skeleton, alpha: Uint8Array, width
       if (score < best) { best = score; pixels[at] = i + 1; }
     }
   }
-  return { width, height, boneIds: skeleton.bones.map(b => b.id), pixels, revision: 0 };
+  return { width, height, boneIds: bones.map(b => b.id), pixels, revision: 0 };
 }
 
 export function paintPartStroke(

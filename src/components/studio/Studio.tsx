@@ -232,7 +232,7 @@ export const Studio: React.FC = () => {
             className="px-2.5 py-1 bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 hover:text-white rounded-lg font-medium flex items-center gap-1 transition text-[11px]"
           >
             <Wand2 className="w-3 h-3 text-emerald-400" />
-            <span>Auto-Weights</span>
+            <span>Rebuild root → tips</span>
           </button>
         </div>
 

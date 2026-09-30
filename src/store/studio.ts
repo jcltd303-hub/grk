@@ -386,10 +386,8 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      this.refreshAutomaticSkinning(false);
-    } else {
-      this.updateDeformedMesh();
     }
+    this.updateDeformedMesh();
   }
 
   public redo() {
@@ -416,10 +414,8 @@ class StudioStore {
 
     if (this.state.skeleton && this.state.mesh) {
       updateWorldTransforms(this.state.skeleton);
-      this.refreshAutomaticSkinning(false);
-    } else {
-      this.updateDeformedMesh();
     }
+    this.updateDeformedMesh();
   }
 
   public init() {
@@ -1550,6 +1546,8 @@ class StudioStore {
   }
 
   public recomputeWeights() {
+    if (!this.state.mesh || !this.state.skeleton?.bones.length) return;
+    this.saveHistory();
     this.refreshAutomaticSkinning();
   }
 
