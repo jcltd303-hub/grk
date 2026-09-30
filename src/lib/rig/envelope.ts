@@ -108,11 +108,31 @@ export function fitEnvelopesToAlpha(
     if (rest) { rest.startWidth = bone.startWidth; rest.endWidth = bone.endWidth; }
   }
 
-  // Envelopes meet at a shared pivot even though pixel ownership is exclusive.
+  // The pivot is the narrowest cross section shared by connected bones.
+  const pivotWidth = (x: number, y: number, bones: typeof ordered): number => {
+    const ix = Math.round(x), iy = Math.round(y);
+    const opaque = (px: number, py: number) => px >= 0 && py >= 0 && px < width && py < height
+      && alpha[py * width + px] >= 20;
+    if (!opaque(ix, iy)) return 2;
+    let limit = Infinity;
+    for (const bone of bones) {
+      const angle = Math.atan2(bone.end.y - bone.start.y, bone.end.x - bone.start.x);
+      const nx = -Math.sin(angle), ny = Math.cos(angle);
+      for (const side of [-1, 1]) {
+        let steps = 1;
+        while (steps <= Math.max(width, height) && opaque(Math.round(x + nx * steps * side), Math.round(y + ny * steps * side))) steps++;
+        limit = Math.min(limit, steps - 0.5);
+      }
+    }
+    return Math.max(2, 2 * limit);
+  };
+
   for (const parent of ordered) {
     const children = ordered.filter(child => child.parentId === parent.id);
     if (!children.length) continue;
-    const jointWidth = Math.max(parent.endWidth ?? 2, ...children.map(c => c.startWidth ?? 2));
+    const jointWidth = Math.min(
+      Math.max(parent.endWidth ?? 2, ...children.map(c => c.startWidth ?? 2)),
+      pivotWidth(parent.end.x, parent.end.y, [parent, ...children]));
     if (!parent.manualEndWidth) {
       parent.endWidth = jointWidth;
       if (parent.widthProfile) parent.widthProfile[parent.widthProfile.length - 1] = jointWidth;

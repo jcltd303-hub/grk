@@ -118,11 +118,16 @@ test('recomputing envelopes after moving a bone covers the complete silhouette',
   fitEnvelopesToAlpha(skeleton,alpha,width,height);
   skeleton.rootPos={x:36,y:10}; updateWorldTransforms(skeleton);
   fitEnvelopesToAlpha(skeleton,alpha,width,height);
-  for(let y=10;y<60;y++) for(let x=28;x<52;x++) assert.ok(bones.some(b=>{
+  // A deliberately off-center pivot cannot both stay inside the silhouette
+  // and cover the wider side with a symmetric joint diameter.
+  for(let y=10;y<60;y++) for(let x=28;x<52;x++) {
+    if (Math.abs(y-bones[0].end.y)<2) continue;
+    assert.ok(bones.some(b=>{
     const dx=b.end.x-b.start.x,dy=b.end.y-b.start.y;
     const t=Math.max(0,Math.min(1,((x-b.start.x)*dx+(y-b.start.y)*dy)/(dx*dx+dy*dy)));
     return Math.hypot(x-b.start.x-t*dx,y-b.start.y-t*dy)<=b.widthProfile![Math.min(b.widthProfile!.length-1,Math.floor(t*b.widthProfile!.length))]/2+0.01;
-  }),`uncovered ${x},${y}`);
+    }),`uncovered ${x},${y}`);
+  }
 });
 
 test('width fitting is root first regardless of stored bone order', () => {
@@ -152,7 +157,7 @@ test('local envelope stays narrow away from a protrusion while covering every pi
   assert.ok(Math.max(...bone.widthProfile) >= 40);
 });
 
-test('connected bone envelopes share a joint width without transferring pixel ownership', () => {
+test('joint width stays inside the narrower silhouette cross section', () => {
   const width=80,height=60,alpha=new Uint8Array(width*height);
   for(let x=5;x<70;x++) {
     const radius=x<40?12:5;
@@ -163,7 +168,7 @@ test('connected bone envelopes share a joint width without transferring pixel ow
   const skel:Skeleton={bones:[root,child],rootId:'root',rootPos:{x:5,y:30},restRootPos:{x:5,y:30},restBones:{}};
   fitEnvelopesToAlpha(skel,alpha,width,height);
   assert.equal(root.endWidth,child.startWidth);
-  assert.ok(root.endWidth! >= 20);
+  assert.ok(root.endWidth! <= 12, `joint width ${root.endWidth} spills past silhouette`);
 });
 
 test('painted ownership guides fitted widths for that part', () => {
@@ -177,4 +182,16 @@ test('painted ownership guides fitted widths for that part', () => {
   fitEnvelopesToAlpha(skel,alpha,width,height,false,mask);
   assert.ok(upper.widthProfile![32] >= 40);
   assert.ok(lower.widthProfile![32] <= 2);
+});
+
+test('joint centered outside artwork cannot inflate either envelope', () => {
+  const alpha=new Uint8Array(60*40);
+  for(let x=5;x<45;x++) for(let y=17;y<=23;y++) alpha[y*60+x]=255;
+  const root:Skeleton['bones'][number]={id:'root',name:'Root',parentId:null,localAngle:0,length:20,color:'#fff',start:{x:5,y:20},end:{x:25,y:20},worldAngle:0};
+  const child:Skeleton['bones'][number]={id:'child',name:'Child',parentId:'root',localAngle:0,length:20,color:'#fff',start:{x:25,y:20},end:{x:45,y:20},worldAngle:0};
+  const skel:Skeleton={bones:[root,child],rootId:'root',rootPos:{x:5,y:8},restRootPos:{x:5,y:8},restBones:{}};
+  updateWorldTransforms(skel);
+  fitEnvelopesToAlpha(skel,alpha,60,40);
+  assert.ok(root.endWidth! <= 2);
+  assert.ok(child.startWidth! <= 2);
 });

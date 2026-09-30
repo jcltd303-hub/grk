@@ -22,3 +22,17 @@ test('angle bounds work independently and rotation handle follows joint directio
   const b = rotationHandle({ x: 10, y: 20, worldAngle: Math.PI / 2 });
   assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 20);
 });
+
+test('transparent mesh vertices get one nearest bone without a prior weight pass', () => {
+  const mesh=generateMesh(30,20,3,2);
+  const skeleton={bones:[
+    {id:'left',start:{x:2,y:10},end:{x:10,y:10}},
+    {id:'right',start:{x:20,y:10},end:{x:28,y:10}},
+  ]} as Skeleton;
+  const pixels=new Uint16Array(600);
+  applyPartWeights(mesh,{width:30,height:20,boneIds:['left','right'],pixels,revision:0},skeleton);
+  const left=mesh.vertices.find(v=>v.originalX===0 && v.originalY===10)!;
+  const right=mesh.vertices.find(v=>v.originalX===30 && v.originalY===10)!;
+  assert.deepEqual(left.weights,[{boneId:'left',weight:1}]);
+  assert.deepEqual(right.weights,[{boneId:'right',weight:1}]);
+});

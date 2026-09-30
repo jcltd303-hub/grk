@@ -152,7 +152,7 @@ export interface StudioState {
   quickRotateBone: (deltaDeg: number) => void;
   resetBoneAngle: (boneId?: string) => void;
   rotateBone: (boneId: string, deltaAngle: number) => void;
-  setBoneAngle: (boneId: string, angle: number) => void;
+  setBoneAngle: (boneId: string, angle: number, live?: boolean) => void;
   setAngleLimit: (boneId: string, side: 'min' | 'max', value?: number) => void;
   clearAngleLimits: (boneId: string) => void;
   setBoneLength: (boneId: string, length: number) => void;
@@ -162,7 +162,8 @@ export interface StudioState {
   setBoneWidths: (boneId: string, startWidth: number, endWidth: number) => void;
   resetBoneWidths: (boneId: string) => void;
   toggleBonePin: (boneId: string) => void;
-  moveBoneJoint: (boneId: string, jointType: 'start' | 'end', newPos: Point2D) => void;
+  moveBoneJoint: (boneId: string, jointType: 'start' | 'end', newPos: Point2D, live?: boolean) => void;
+  finishJointDrag: () => void;
   applyIK: (effectorBoneId: string, targetPos: Point2D) => void;
   resetToRestPose: () => void;
   recomputeWeights: () => void;
@@ -265,7 +266,7 @@ class StudioStore {
       redo: () => this.redo(),
       saveHistory: () => this.saveHistory(),
       rotateBone: (id, delta) => this.rotateBone(id, delta),
-      setBoneAngle: (id, angle) => this.setBoneAngle(id, angle),
+      setBoneAngle: (id, angle, live) => this.setBoneAngle(id, angle, live),
       setAngleLimit: (id, side, value) => this.setAngleLimit(id, side, value),
       clearAngleLimits: (id) => this.clearAngleLimits(id),
       setBoneLength: (id, len) => this.setBoneLength(id, len),
@@ -275,7 +276,8 @@ class StudioStore {
       setBoneWidths: (id, w1, w2) => this.setBoneWidths(id, w1, w2),
       resetBoneWidths: (id) => this.resetBoneWidths(id),
       toggleBonePin: (id) => this.toggleBonePin(id),
-      moveBoneJoint: (id, type, pos) => this.moveBoneJoint(id, type, pos),
+      moveBoneJoint: (id, type, pos, live) => this.moveBoneJoint(id, type, pos, live),
+      finishJointDrag: () => this.finishJointDrag(),
       addBone: (pId, endPos, startPos, opts) => this.addBone(pId, endPos, startPos, opts),
       deleteBone: (id) => this.deleteBone(id),
       clearAllBones: () => this.clearAllBones(),
@@ -732,9 +734,8 @@ class StudioStore {
             }
           }
           if (restoredParts) {
-            mesh = generateMesh(w, h, Math.max(18, Math.min(160, Math.ceil(w / 7))),
-              Math.max(26, Math.min(160, Math.ceil(h / 7))), alphaMask);
-            computeAutoWeights(mesh, restSkeleton);
+            mesh = generateMesh(w, h, Math.max(18, Math.min(80, Math.ceil(w / 9))),
+              Math.max(26, Math.min(80, Math.ceil(h / 9))), alphaMask);
             applyPartWeights(mesh, restoredParts, restSkeleton);
           }
           this.setState({
@@ -855,7 +856,7 @@ class StudioStore {
         }
         const currentRest = this.state.restSkeleton || skeleton;
         const transforms = computeBoneDeltaTransforms(skeleton, currentRest);
-        deformMesh(mesh, transforms);
+        deformMesh(mesh, transforms, skeleton, currentRest);
       }
     }
 
@@ -924,14 +925,16 @@ class StudioStore {
   }
 
   public setSelectedBoneId(id: string | null) {
-    this.setState({ selectedBoneId: id });
+    if (this.state.selectedBoneId !== id) this.setState({ selectedBoneId: id });
   }
 
   public setHoveredBoneId(id: string | null) {
-    this.setState({ hoveredBoneId: id });
+    if (this.state.hoveredBoneId !== id) this.setState({ hoveredBoneId: id });
   }
 
   public setHoveredJoint(joint: { boneId: string; type: 'start' | 'end' } | null) {
+    const current = this.state.hoveredJoint;
+    if (current?.boneId === joint?.boneId && current?.type === joint?.type) return;
     this.setState({ hoveredJoint: joint });
   }
 
@@ -955,7 +958,7 @@ class StudioStore {
     this.updateDeformedMesh();
   }
 
-  public setBoneAngle(boneId: string, angle: number) {
+  public setBoneAngle(boneId: string, angle: number, live = false) {
     const { skeleton, mode, mesh } = this.state;
     if (!skeleton) return;
     const bone = skeleton.bones.find((b) => b.id === boneId);
@@ -967,8 +970,8 @@ class StudioStore {
     if (mode === 'rig') {
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      this.refreshAutomaticSkinning();
-      this.notify();
+      if (live) this.updateDeformedMesh();
+      else this.refreshAutomaticSkinning();
       return;
     }
 
@@ -1104,7 +1107,7 @@ class StudioStore {
     }
   }
 
-  public moveBoneJoint(boneId: string, jointType: 'start' | 'end', newPos: Point2D) {
+  public moveBoneJoint(boneId: string, jointType: 'start' | 'end', newPos: Point2D, live = false) {
     const { skeleton, mesh, mode } = this.state;
     if (!skeleton) return;
     const bone = skeleton.bones.find((b) => b.id === boneId);
@@ -1140,13 +1143,16 @@ class StudioStore {
       // In rig mode, adjust rest geometry directly - DO NOT BEND!
       if (mesh) resetMeshToRest(mesh);
       this.state.restSkeleton = cloneSkeleton(skeleton);
-      this.refreshAutomaticSkinning();
-      this.notify();
+      if (live) this.updateDeformedMesh();
+      else this.refreshAutomaticSkinning();
       return;
     }
 
     this.updateDeformedMesh();
-    this.refreshAutomaticSkinning();
+  }
+
+  public finishJointDrag() {
+    if (this.state.mode === 'rig') this.refreshAutomaticSkinning();
   }
 
   /**
@@ -1516,10 +1522,11 @@ class StudioStore {
       if (!alphaMask || alphaMask.length !== mesh.width * mesh.height) inferBoneWidthsFromMeshGeometry(mesh, bindSkeleton);
       fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height, false, this.state.partOwnership);
     }
-    computeAutoWeights(mesh, bindSkeleton);
     if (alphaMask?.length === mesh.width * mesh.height && bindSkeleton.bones.length) {
       const ownership = this.state.partOwnership ?? createPartOwnership(bindSkeleton, alphaMask, mesh.width, mesh.height);
       applyPartWeights(mesh, ownership, bindSkeleton);
+    } else {
+      computeAutoWeights(mesh, bindSkeleton);
     }
     for (const vertex of mesh.vertices) {
       if (!alphaMask && !this.state.partOwnership && vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
@@ -1642,8 +1649,8 @@ class StudioStore {
       this.state.partOwnership = createPartOwnership(skeleton,alphaMask,mesh.width,mesh.height);
       // A continuous grid avoids legacy split seams and follows the painted field.
       const fresh = generateMesh(mesh.width, mesh.height,
-        Math.max(18, Math.min(160, Math.ceil(mesh.width / 7))),
-        Math.max(26, Math.min(160, Math.ceil(mesh.height / 7))), alphaMask);
+        Math.max(18, Math.min(80, Math.ceil(mesh.width / 9))),
+        Math.max(26, Math.min(80, Math.ceil(mesh.height / 9))), alphaMask);
       this.state.mesh = fresh;
     }
     this.partStrokeActive = true;

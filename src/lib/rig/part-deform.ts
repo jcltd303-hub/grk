@@ -1,10 +1,13 @@
 import type { RigMesh, Skeleton, Vertex } from './types';
 import type { PartOwnership } from './part-brush';
+import { distToSegment } from './math';
+import { bonesRootFirst } from './skeleton';
 
 /** Turn painted ownership into a continuous skinning field on the original image. */
 export function applyPartWeights(mesh: RigMesh, mask: PartOwnership, skeleton: Skeleton): void {
   if (mask.width !== mesh.width || mask.height !== mesh.height) return;
-  const valid = new Set(skeleton.bones.map(b => b.id));
+  const bones = bonesRootFirst(skeleton);
+  const valid = new Set(bones.map(b => b.id));
   for (const vertex of mesh.vertices) {
     const x = Math.max(0, Math.min(mask.width - 1, Math.round(vertex.originalX)));
     const y = Math.max(0, Math.min(mask.height - 1, Math.round(vertex.originalY)));
@@ -23,8 +26,11 @@ export function applyPartWeights(mesh: RigMesh, mask: PartOwnership, skeleton: S
       const id = mask.boneIds[mask.pixels[py * mask.width + px] - 1];
       if (id && valid.has(id)) { nearest = id; break search; }
     }
-    const fallback = vertex.weights.find(w => valid.has(w.boneId))?.boneId ?? skeleton.bones[0]?.id;
-    if (nearest || fallback) vertex.weights = [{ boneId: nearest ?? fallback!, weight: 1 }];
+    const fallback = bones.reduce<{ id: string; distance: number } | null>((best, bone) => {
+      const distance = distToSegment({ x: vertex.originalX, y: vertex.originalY }, bone.start, bone.end);
+      return !best || distance < best.distance ? { id: bone.id, distance } : best;
+    }, null);
+    if (nearest || fallback) vertex.weights = [{ boneId: nearest ?? fallback!.id, weight: 1 }];
   }
 }
 

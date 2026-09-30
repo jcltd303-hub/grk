@@ -483,7 +483,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                 </div>
 
                 {/* Mobile-friendly envelope controls: keep these in the inspector so they never cover the artwork. */}
-                <div className="md:hidden p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3">
+                <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold text-sky-300">Envelope Widths</span>
                     <button type="button" onClick={() => studioStore.resetBoneWidths(selectedBone.id)}

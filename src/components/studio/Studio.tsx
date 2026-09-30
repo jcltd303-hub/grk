@@ -17,8 +17,6 @@ import {
   GitBranch,
   RotateCcw,
   Wand2,
-  ChevronLeft,
-  ChevronRight,
 } from 'lucide-react';
 
 export const Studio: React.FC = () => {
@@ -187,16 +185,6 @@ export const Studio: React.FC = () => {
       <div className="h-9 bg-slate-900/90 border-b border-slate-800/80 flex items-center justify-between px-3 shrink-0 z-10 text-xs overflow-x-auto custom-scrollbar gap-2">
         <div className="flex items-center gap-1.5 shrink-0">
           <button
-            id="btn_toolbar_load_rig"
-            onClick={() => setIsLoadModalOpen(true)}
-            className="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/40 text-sky-300 rounded-lg font-medium flex items-center gap-1 transition text-[11px]"
-            title="Load Rig from JSON to Test/Play"
-          >
-            <FolderDown className="w-3 h-3 text-sky-400" />
-            <span>Load Rig</span>
-          </button>
-
-          <button
             id="btn_header_draw"
             onClick={() => {
               studioStore.setTool('add_bone');
@@ -236,26 +224,7 @@ export const Studio: React.FC = () => {
           </button>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 text-[11px] text-slate-400">
-          <span>Bones: <strong className="text-white font-mono">{skeleton?.bones.length || 0}</strong></span>
-          <div className="h-3 w-px bg-slate-800 mx-1" />
-          <button
-            onClick={() => studioStore.selectPreviousBone()}
-            disabled={!skeleton || skeleton.bones.length === 0}
-            className="p-1 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 rounded transition"
-            title="Previous Bone"
-          >
-            <ChevronLeft className="w-3 h-3" />
-          </button>
-          <button
-            onClick={() => studioStore.selectNextBone()}
-            disabled={!skeleton || skeleton.bones.length === 0}
-            className="p-1 bg-slate-800/80 hover:bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 rounded transition"
-            title="Next Bone"
-          >
-            <ChevronRight className="w-3 h-3" />
-          </button>
-        </div>
+
       </div>
 
       {/* Main Studio Body: Sidebar + Viewport */}

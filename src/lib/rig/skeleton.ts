@@ -101,7 +101,10 @@ export function computeBoneDeltaTransforms(
 /**
  * Deforms mesh vertices according to Linear Blend Skinning (LBS).
  */
-export function deformMesh(mesh: RigMesh, boneTransforms: Map<string, BoneTransformMatrix>): void {
+export function deformMesh(mesh: RigMesh, boneTransforms: Map<string, BoneTransformMatrix>,
+  skeleton?: Skeleton, restSkeleton?: Skeleton): void {
+  const activeBones = new Map(skeleton?.bones.map(b => [b.id, b]) ?? []);
+  const bindBones = new Map(restSkeleton?.bones.map(b => [b.id, b]) ?? []);
   for (const vertex of mesh.vertices) {
     if (vertex.weights.length === 0) {
       vertex.x = vertex.originalX;
@@ -117,8 +120,23 @@ export function deformMesh(mesh: RigMesh, boneTransforms: Map<string, BoneTransf
       const transform = boneTransforms.get(boneId);
       if (!transform || weight <= 0) continue;
 
-      const px = transform.cos * vertex.originalX - transform.sin * vertex.originalY + transform.tx;
-      const py = transform.sin * vertex.originalX + transform.cos * vertex.originalY + transform.ty;
+      let px = transform.cos * vertex.originalX - transform.sin * vertex.originalY + transform.tx;
+      let py = transform.sin * vertex.originalX + transform.cos * vertex.originalY + transform.ty;
+      const bone = activeBones.get(boneId);
+      const bindBone = bindBones.get(boneId);
+      if (bone?.parentId && bindBone) {
+        const parent = boneTransforms.get(bone.parentId);
+        if (parent) {
+          const radius = Math.max(2, (bindBone.startWidth ?? bindBones.get(bone.parentId)?.endWidth ?? 12) / 2);
+          const distance = Math.hypot(vertex.originalX - bindBone.start.x, vertex.originalY - bindBone.start.y);
+          const t = Math.max(0, Math.min(1, distance / radius));
+          const bend = t * t * (3 - 2 * t);
+          const parentX = parent.cos * vertex.originalX - parent.sin * vertex.originalY + parent.tx;
+          const parentY = parent.sin * vertex.originalX + parent.cos * vertex.originalY + parent.ty;
+          px = parentX * (1 - bend) + px * bend;
+          py = parentY * (1 - bend) + py * bend;
+        }
+      }
 
       dx += px * weight;
       dy += py * weight;

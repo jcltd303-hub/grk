@@ -239,8 +239,6 @@ function drawDeformedMesh(
     const denom = (u0 * (v1_y - v2_y) - v0_y * (u1 - u2) + (u1 * v2_y - u2 * v1_y));
     if (Math.abs(denom) < 0.0001) continue;
 
-    const m11 = (x0 * (v1_y - v2_y) - y0 * (u1 - u2) + (u1 * y2 - u2 * y1)) / denom;
-    const m12 = (y0 * (v1_y - v2_y) + x0 * (u1 - u2) - (u1 * x2 - u2 * x1)) / denom; // standard affine
     // Exact affine solve:
     const a = (x0 * (v1_y - v2_y) + x1 * (v2_y - v0_y) + x2 * (v0_y - v1_y)) / denom;
     const b = (y0 * (v1_y - v2_y) + y1 * (v2_y - v0_y) + y2 * (v0_y - v1_y)) / denom;
@@ -258,7 +256,13 @@ function drawDeformedMesh(
     ctx.clip();
 
     ctx.transform(a, b, c, d, e, f);
-    ctx.drawImage(image, 0, 0);
+    // Sampling a small source rectangle avoids decoding/drawing the full
+    // artwork for every triangle, especially on mobile high-res imports.
+    const sx = Math.max(0, Math.floor(Math.min(u0, u1, u2)) - 1);
+    const sy = Math.max(0, Math.floor(Math.min(v0_y, v1_y, v2_y)) - 1);
+    const ex = Math.min(imgWidth, Math.ceil(Math.max(u0, u1, u2)) + 1);
+    const ey = Math.min(imgHeight, Math.ceil(Math.max(v0_y, v1_y, v2_y)) + 1);
+    if (ex > sx && ey > sy) ctx.drawImage(image, sx, sy, ex - sx, ey - sy, sx, sy, ex - sx, ey - sy);
     ctx.restore();
   }
 }

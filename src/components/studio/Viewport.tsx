@@ -8,30 +8,22 @@ import { distance, angleBetween, normalizeAngle, distToSegment, radToDeg } from 
 import {
   Eye,
   EyeOff,
-  Grid,
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  RotateCw,
   Crosshair,
   Sparkles,
   SlidersHorizontal,
   Plus,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   GitBranch,
-  CornerUpLeft,
   Check,
   Pencil,
   Zap,
-  Pin,
-  PinOff,
   Undo2,
   Redo2,
   Sliders,
   Paintbrush,
-  Scissors,
   Magnet,
 } from 'lucide-react';
 
@@ -58,9 +50,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const tool = useStudioStore((s) => s.tool);
   const weightBrushSettings = useStudioStore((s) => s.weightBrushSettings);
   const showTexture = useStudioStore((s) => s.showTexture);
-  const showMesh = useStudioStore((s) => s.showMesh);
   const showBones = useStudioStore((s) => s.showBones);
-  const showWeights = useStudioStore((s) => s.showWeights);
   const selectedBoneId = useStudioStore((s) => s.selectedBoneId);
   const hoveredBoneId = useStudioStore((s) => s.hoveredBoneId);
   const hoveredJoint = useStudioStore((s) => s.hoveredJoint);
@@ -74,13 +64,10 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   // Interaction State
   const [isPanning, setIsPanning] = useState(false);
+  const [canvasResizeTick, setCanvasResizeTick] = useState(0);
   const [snapIndicator, setSnapIndicator] = useState<SnapResult | null>(null);
-  const [cutStart, setCutStart] = useState<Point2D | null>(null);
-  const [cutEnd, setCutEnd] = useState<Point2D | null>(null);
-  const [cutLeftBone, setCutLeftBone] = useState('');
-  const [cutRightBone, setCutRightBone] = useState('');
   const [dragAction, setDragAction] = useState<{
-    type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_weight' | 'paint_part';
+    type: 'bone_rotate' | 'joint_move' | 'ik' | 'paint_part';
     boneId: string;
     jointType?: 'start' | 'end';
     startAngle?: number;
@@ -242,7 +229,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
           // Weight brush HUD preview (when in weights mode or weight_brush tool)
           let weightBrushPreview = null;
-          if ((mode === 'weights' || tool === 'weight_brush' || tool === 'part_brush') && cursorWorldPosRef.current) {
+          if (tool === 'part_brush' && cursorWorldPosRef.current) {
             weightBrushPreview = {
               pos: cursorWorldPosRef.current,
               radius: tool === 'part_brush' ? partBrushRadius : weightBrushSettings.radius,
@@ -257,9 +244,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             bindSkeleton,
             showPartColors: tool === 'part_brush',
             showTexture,
-            showMesh,
+            showMesh: false,
             showBones,
-            showWeights,
+            showWeights: false,
             selectedBoneId,
             hoveredBoneId,
             hoveredJoint,
@@ -271,22 +258,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             branchOriginHint,
             weightBrushPreview,
           });
-          if (mode === 'rig' && (cutStart || mesh?.cut)) {
-            const seam = cutStart && cutEnd ? { start: cutStart, end: cutEnd } : mesh?.cut;
-            if (seam) {
-              ctx.save();
-              ctx.translate(canvas.width / 2 + pan.x, canvas.height / 2 + pan.y);
-              ctx.scale(zoom, zoom);
-              ctx.strokeStyle = '#f97316';
-              ctx.lineWidth = 3 / zoom;
-              ctx.setLineDash([8 / zoom, 5 / zoom]);
-              ctx.beginPath();
-              ctx.moveTo(seam.start.x, seam.start.y);
-              ctx.lineTo(seam.end.x, seam.end.y);
-              ctx.stroke();
-              ctx.restore();
-            }
-          }
           if (snapEnabled && snapIndicator?.kind) {
             ctx.save();
             ctx.translate(canvas.width / 2 + pan.x, canvas.height / 2 + pan.y);
@@ -306,7 +277,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           }
         }
       }
-      animId = requestAnimationFrame(render);
+      if (isPlaying) animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
@@ -317,9 +288,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     skeleton,
     mode,
     showTexture,
-    showMesh,
     showBones,
-    showWeights,
     selectedBoneId,
     hoveredBoneId,
     hoveredJoint,
@@ -331,8 +300,9 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     tool,
     selectedBone,
     weightBrushSettings,
-    cutStart,
-    cutEnd,
+    partOwnership,
+    cursorWorldPos,
+    canvasResizeTick,
     snapEnabled,
     snapIndicator,
   ]);
@@ -344,6 +314,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       if (!canvas || !canvas.parentElement) return;
       canvas.width = canvas.parentElement.clientWidth;
       canvas.height = canvas.parentElement.clientHeight;
+      setCanvasResizeTick(value => value + 1);
     };
     handleResize();
     window.addEventListener('resize', handleResize);
@@ -478,38 +449,12 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
     if (e.button === 0) {
       const worldPos = screenToWorld(e.clientX, e.clientY);
-      if (tool === 'cut' && mode === 'rig') {
-        setCutStart(worldPos);
-        setCutEnd(worldPos);
-        return;
-      }
-
       if (tool === 'part_brush' && mode === 'rig') {
         if (studioStore.beginPartStroke(worldPos)) {
           lastPaintPos.current = worldPos;
           setDragAction({ type:'paint_part', boneId:selectedBoneId! });
         }
         return;
-      }
-
-      // WEIGHT BRUSH PAINTING MODE
-      if (tool === 'weight_brush' || mode === 'weights') {
-        const { boneId } = findHoverTarget(worldPos);
-        // If clicked on another bone joint/body and holding Alt/Ctrl or bone found, allow switching active bone
-        if (e.altKey && boneId) {
-          studioStore.setSelectedBoneId(boneId);
-          return;
-        }
-        if (selectedBoneId) {
-          setDragAction({ type: 'paint_weight', boneId: selectedBoneId });
-          studioStore.paintWeights(worldPos);
-          return;
-        } else if (boneId) {
-          studioStore.setSelectedBoneId(boneId);
-          setDragAction({ type: 'paint_weight', boneId });
-          studioStore.paintWeights(worldPos);
-          return;
-        }
       }
 
       // ADD BONE / DRAW MODE
@@ -529,16 +474,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         }
       }
 
-      // NORMAL SELECTION & INTERACTION MODE
-      if (selectedBone && (mode === 'rig' || mode === 'pose' || mode === 'animate')) {
-        const handle = rotationHandle({ x: selectedBone.start.x, y: selectedBone.start.y, worldAngle: selectedBone.worldAngle });
-        if (distance(worldPos, handle) < 24 / zoom) {
-          studioStore.saveHistory();
-          setDragAction({ type: 'bone_rotate', boneId: selectedBone.id,
-            startAngle: selectedBone.localAngle, mouseStartAngle: angleBetween(selectedBone.start, worldPos) });
-          return;
-        }
-      }
       const { boneId, joint } = findHoverTarget(worldPos);
 
       if (boneId) {
@@ -556,6 +491,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
         // Rigging mode joint adjustment (rest pose repositioning)
         if (mode === 'rig' && joint) {
+          studioStore.saveHistory();
           setDragAction({ type: 'joint_move', boneId, jointType: joint.type });
           return;
         }
@@ -585,9 +521,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       ? skeleton?.bones.find(b => b.id === dragAction.boneId)?.start : null;
     const result = tool === 'add_bone' || dragAction?.type === 'joint_move' || dragAction?.type === 'ik'
       ? snapAt(worldPos, anchor, dragAction?.boneId) : { point: worldPos, kind: null } as SnapResult;
-    setCursorWorldPos(result.point);
+    setCursorWorldPos(tool === 'add_bone' || tool === 'part_brush' ? result.point : null);
     setSnapIndicator(result.kind ? result : null);
-    if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
     if (isPanning) {
       const dx = e.clientX - lastMousePos.current.x;
@@ -600,8 +535,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
     if (dragAction) {
       if (dragAction.type === 'paint_part') {
         paintThrough(worldPos);
-      } else if (dragAction.type === 'paint_weight') {
-        studioStore.paintWeights(worldPos);
+
       } else if (dragAction.type === 'ik') {
         studioStore.applyIK(dragAction.boneId, result.point);
       } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
@@ -613,7 +547,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           const delta = normalizeAngle(currentMouseAngle - dragAction.mouseStartAngle);
           const parentAngle = skeleton?.bones.find(b => b.id === bone.parentId)?.worldAngle ?? 0;
           const angle = dragAction.startAngle + delta;
-          studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle);
+          studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle, true);
         }
       }
       return;
@@ -627,14 +561,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   const handleMouseUp = () => {
     if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
+    if (dragAction?.type === 'joint_move' || (dragAction?.type === 'bone_rotate' && mode === 'rig')) studioStore.finishJointDrag();
     setSnapIndicator(null);
-    if (cutStart && cutEnd && tool === 'cut') {
-      try {
-        studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
-      } catch (error) { window.alert(error instanceof Error ? error.message : 'Cut failed.'); }
-      setCutStart(null);
-      setCutEnd(null);
-    }
     setIsPanning(false);
     setDragAction(null);
   };
@@ -650,6 +578,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
+      if (dragAction?.type === 'joint_move' || (dragAction?.type === 'bone_rotate' && mode === 'rig')) studioStore.finishJointDrag();
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
@@ -669,8 +598,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       touchState.current.isMultiTouch = false;
       const t = e.touches[0];
       const worldPos = screenToWorld(t.clientX, t.clientY);
-      setCursorWorldPos(worldPos);
-      if (tool === 'cut' && mode === 'rig') { setCutStart(worldPos); setCutEnd(worldPos); return; }
+      if (tool === 'add_bone' || tool === 'part_brush') setCursorWorldPos(worldPos);
       if (tool === 'part_brush' && mode === 'rig') {
         if (studioStore.beginPartStroke(worldPos)) {
           lastPaintPos.current=worldPos;
@@ -679,21 +607,21 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         return;
       }
 
-      // Handle weight painting on touch
-      if (tool === 'weight_brush' || mode === 'weights') {
-        if (selectedBoneId) {
-          setDragAction({ type: 'paint_weight', boneId: selectedBoneId });
-          studioStore.paintWeights(worldPos);
-          return;
-        }
-      }
-
       // Handle add bone on touch
       if (tool === 'add_bone') {
         handleAddBoneClick(snapAt(worldPos, addBoneAnchor()).point);
         return;
       }
 
+      if (selectedBone && (mode === 'rig' || mode === 'pose' || mode === 'animate')) {
+        const handle = rotationHandle({ x: selectedBone.start.x, y: selectedBone.start.y, worldAngle: selectedBone.worldAngle });
+        if (distance(worldPos, handle) < 24 / zoom) {
+          studioStore.saveHistory();
+          setDragAction({ type: 'bone_rotate', boneId: selectedBone.id,
+            startAngle: selectedBone.localAngle, mouseStartAngle: angleBetween(selectedBone.start, worldPos) });
+          return;
+        }
+      }
       const { boneId, joint } = findHoverTarget(worldPos);
 
       if (boneId) {
@@ -702,6 +630,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         if (!bone) return;
 
         if (mode === 'rig' && joint) {
+          studioStore.saveHistory();
           setDragAction({ type: 'joint_move', boneId, jointType: joint.type });
           return;
         }
@@ -754,9 +683,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         ? skeleton?.bones.find(b => b.id === dragAction.boneId)?.start : null;
       const result = tool === 'add_bone' || dragAction?.type === 'joint_move' || dragAction?.type === 'ik'
         ? snapAt(worldPos, anchor, dragAction?.boneId) : { point: worldPos, kind: null } as SnapResult;
-      setCursorWorldPos(result.point);
+      setCursorWorldPos(tool === 'add_bone' || tool === 'part_brush' ? result.point : null);
       setSnapIndicator(result.kind ? result : null);
-      if (cutStart && tool === 'cut') { setCutEnd(worldPos); return; }
 
       if (isPanning) {
         const dx = t.clientX - lastMousePos.current.x;
@@ -769,12 +697,11 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
       if (dragAction) {
         if (dragAction.type === 'paint_part') {
           paintThrough(worldPos);
-        } else if (dragAction.type === 'paint_weight') {
-          studioStore.paintWeights(worldPos);
+
         } else if (dragAction.type === 'ik') {
           studioStore.applyIK(dragAction.boneId, result.point);
         } else if (dragAction.type === 'joint_move' && dragAction.jointType) {
-          studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, result.point);
+          studioStore.moveBoneJoint(dragAction.boneId, dragAction.jointType, result.point, true);
         } else if (dragAction.type === 'bone_rotate') {
           const bone = skeleton?.bones.find((b) => b.id === dragAction.boneId);
           if (bone && dragAction.startAngle !== undefined && dragAction.mouseStartAngle !== undefined) {
@@ -782,7 +709,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             const delta = normalizeAngle(currentMouseAngle - dragAction.mouseStartAngle);
             const parentAngle = skeleton?.bones.find(b => b.id === bone.parentId)?.worldAngle ?? 0;
             const angle = dragAction.startAngle + delta;
-            studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle);
+            studioStore.setBoneAngle(dragAction.boneId, snapEnabled ? snapAngle(angle + parentAngle) - parentAngle : angle, true);
           }
         }
       }
@@ -791,37 +718,19 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
   const handleTouchEnd = () => {
     if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; }
+    if (dragAction?.type === 'joint_move' || (dragAction?.type === 'bone_rotate' && mode === 'rig')) studioStore.finishJointDrag();
     setSnapIndicator(null);
-    if (cutStart && cutEnd && tool === 'cut') {
-      try {
-        studioStore.cutArtwork(cutStart, cutEnd, cutLeftBone || selectedBoneId || '', cutRightBone || skeleton?.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || '');
-      } catch (error) { window.alert(error instanceof Error ? error.message : 'Cut failed.'); }
-      setCutStart(null);
-      setCutEnd(null);
-    }
     setIsPanning(false);
     setDragAction(null);
     touchState.current.isMultiTouch = false;
   };
 
   const isAddBoneMode = tool === 'add_bone';
-  const isWeightBrushMode = tool === 'weight_brush' || tool === 'part_brush' || mode === 'weights';
+  const isWeightBrushMode = tool === 'part_brush';
   const hasBones = skeleton && skeleton.bones.length > 0;
 
   return (
     <div className="relative w-full h-full bg-slate-950 overflow-hidden select-none">
-      {/* Blueprint Grid Background */}
-      <div
-        className="absolute inset-0 opacity-20 pointer-events-none"
-        style={{
-          backgroundImage: `
-            linear-gradient(to right, #334155 1px, transparent 1px),
-            linear-gradient(to bottom, #334155 1px, transparent 1px)
-          `,
-          backgroundSize: '24px 24px',
-        }}
-      />
-
       {/* Main Interactive Canvas */}
       <canvas
         id="rig_viewport_canvas"
@@ -829,7 +738,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => { if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; setDragAction(null); } }}
+        onMouseLeave={() => { if (dragAction?.type === 'paint_part') { studioStore.endPartStroke(); lastPaintPos.current=null; } if (dragAction?.type === 'joint_move' || (dragAction?.type === 'bone_rotate' && mode === 'rig')) studioStore.finishJointDrag(); setDragAction(null); }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -838,9 +747,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         onContextMenu={(e) => e.preventDefault()}
         className={`absolute inset-0 touch-none ${
           isWeightBrushMode
-            ? dragAction?.type === 'paint_weight'
-              ? 'cursor-crosshair'
-              : 'cursor-crosshair'
+            ? 'cursor-crosshair'
             : isAddBoneMode
             ? 'cursor-crosshair'
             : dragAction
@@ -925,30 +832,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           <span className="hidden sm:inline">Bones</span>
         </button>
 
-        <button
-          id="btn_toggle_mesh"
-          onClick={() => studioStore.toggleView('showMesh')}
-          title="Toggle 2D Deformation Mesh"
-          className={`p-1.5 sm:p-2 rounded-md sm:rounded-lg text-xs font-medium flex items-center gap-1 transition-colors shrink-0 ${
-            showMesh ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Grid className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          <span className="hidden sm:inline">Mesh</span>
-        </button>
-
-        <button
-          id="btn_toggle_weights"
-          onClick={() => studioStore.toggleView('showWeights')}
-          title="Toggle Skinning Weight Heatmap"
-          className={`p-1.5 sm:p-2 rounded-md sm:rounded-lg text-xs font-medium flex items-center gap-1 transition-colors shrink-0 ${
-            showWeights ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <span className="hidden sm:inline">Weights</span>
-          <span className="sm:hidden text-[10px] px-0.5">W</span>
-        </button>
-
         <div className="h-4 w-px bg-slate-800 mx-0.5 shrink-0" />
 
         <button
@@ -1027,177 +910,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         </div>
       )}
 
-      {/* WEIGHT PAINTING INTERACTIVE INSTRUCTION CARD */}
-      {isWeightBrushMode && !isAddBoneMode && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-emerald-500/40 backdrop-blur-md rounded-2xl px-4 py-2.5 shadow-2xl z-30 flex items-center gap-3 text-xs max-w-lg w-[92%] sm:w-auto">
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-            <Paintbrush className="w-4 h-4" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold text-white truncate flex items-center gap-1.5">
-              <span>Painting:</span>
-              {selectedBone ? (
-                <span className="text-emerald-300 font-bold">{selectedBone.name}</span>
-              ) : (
-                <span className="text-amber-400">Select a bone to paint weights</span>
-              )}
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 uppercase font-mono ml-1">
-                {weightBrushSettings.mode} (R:{weightBrushSettings.radius}px)
-              </span>
-            </div>
-            <div className="text-[11px] text-slate-400 truncate">
-              Click & drag across mesh vertices to sculpt bone influence heatmap.
-            </div>
-          </div>
-          <button
-            id="btn_done_painting_weights"
-            onClick={() => {
-              studioStore.setTool('select');
-              studioStore.setMode('pose');
-            }}
-            className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-xl text-xs flex items-center gap-1.5 shrink-0 shadow-md shadow-emerald-500/25 transition"
-          >
-            <Check className="w-3.5 h-3.5" />
-            <span>Done</span>
-          </button>
-        </div>
-      )}
-
-      {/* FLOATING SELECTED BONE WIDTH SLIDERS & PIN OVERLAY (When a bone is selected) */}
-      {selectedBone && (
-        <div className="hidden md:block absolute top-14 left-3 bg-slate-900/90 backdrop-blur-md border border-slate-700/70 rounded-2xl p-3 shadow-2xl z-20 w-64 text-xs space-y-2.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                className="w-3 h-3 rounded-full shrink-0 border border-white/20"
-                style={{ backgroundColor: selectedBone.color }}
-              />
-              <span className="font-semibold text-white truncate">{selectedBone.name}</span>
-            </div>
-
-            {/* Pin Node Toggle Button */}
-            <button
-              id="btn_hud_toggle_pin"
-              onClick={() => studioStore.toggleBonePin(selectedBone.id)}
-              title={
-                selectedBone.isPinned
-                  ? 'Node is Pinned (Immobile). Click to Unpin.'
-                  : 'Pin Node (Make Immobile in Rigging & IK)'
-              }
-              className={`px-2 py-0.5 rounded-lg text-[11px] font-medium flex items-center gap-1 transition ${
-                selectedBone.isPinned
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'
-              }`}
-            >
-              {selectedBone.isPinned ? (
-                <Pin className="w-3 h-3 fill-amber-400 text-amber-400" />
-              ) : (
-                <PinOff className="w-3 h-3" />
-              )}
-              <span>{selectedBone.isPinned ? 'Pinned' : 'Pin'}</span>
-            </button>
-          </div>
-
-          <div className="flex gap-2">
-            <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'min')}
-              className="flex-1 rounded bg-slate-800 px-2 py-1 text-amber-300">Set min {selectedBone.minAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.minAngle))}°`}</button>
-            <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'max')}
-              className="flex-1 rounded bg-slate-800 px-2 py-1 text-amber-300">Set max {selectedBone.maxAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.maxAngle))}°`}</button>
-          </div>
-
-          {/* Envelope Width Slider 1: Start Width (Pivot) */}
-          <div className="space-y-1 bg-slate-950/60 p-2 rounded-xl border border-slate-800/80">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">1. Pivot Width (W1)</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() =>
-                    studioStore.setBoneStartWidth(
-                      selectedBone.id,
-                      Math.max(2, (selectedBone.startWidth ?? 24) - 2)
-                    )
-                  }
-                  className="px-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-mono"
-                >
-                  -
-                </button>
-                <span className="font-mono text-white font-semibold text-[11px] w-7 text-center">
-                  {Math.round(selectedBone.startWidth ?? 24)}
-                </span>
-                <button
-                  onClick={() =>
-                    studioStore.setBoneStartWidth(
-                      selectedBone.id,
-                      Math.min(500, (selectedBone.startWidth ?? 24) + 4)
-                    )
-                  }
-                  className="px-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-mono"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            <input
-              type="range"
-              id="hud_slider_start_width"
-              min="2"
-              max="400"
-              value={Math.round(selectedBone.startWidth ?? 24)}
-              onChange={(e) =>
-                studioStore.setBoneStartWidth(selectedBone.id, Number(e.target.value))
-              }
-              className="w-full accent-sky-500 cursor-pointer"
-            />
-          </div>
-
-          {/* Envelope Width Slider 2: End Width (Tip) */}
-          <div className="space-y-1 bg-slate-950/60 p-2 rounded-xl border border-slate-800/80">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-400">2. Tip Width (W2)</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() =>
-                    studioStore.setBoneEndWidth(
-                      selectedBone.id,
-                      Math.max(2, (selectedBone.endWidth ?? 16) - 4)
-                    )
-                  }
-                  className="px-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-mono"
-                >
-                  -
-                </button>
-                <span className="font-mono text-white font-semibold text-[11px] w-9 text-center">
-                  {Math.round(selectedBone.endWidth ?? 16)}px
-                </span>
-                <button
-                  onClick={() =>
-                    studioStore.setBoneEndWidth(
-                      selectedBone.id,
-                      Math.min(500, (selectedBone.endWidth ?? 16) + 4)
-                    )
-                  }
-                  className="px-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px] font-mono"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            <input
-              type="range"
-              id="hud_slider_end_width"
-              min="2"
-              max="400"
-              value={Math.round(selectedBone.endWidth ?? 16)}
-              onChange={(e) =>
-                studioStore.setBoneEndWidth(selectedBone.id, Number(e.target.value))
-              }
-              className="w-full accent-sky-500 cursor-pointer"
-            />
-          </div>
-        </div>
-      )}
-
       {/* FLOATING BONE CONTROLS HUD (ADD / DELETE / SELECT / UNDO / REDO / NUDGE POSE) */}
       <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 sm:gap-2 bg-slate-900/95 backdrop-blur-md p-1.5 sm:p-2 rounded-2xl border border-slate-800/90 shadow-2xl z-20 max-w-[96vw] overflow-x-auto custom-scrollbar">
         {/* UNDO / REDO GROUP */}
@@ -1224,16 +936,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
         {/* BONE SELECTION GROUP */}
         <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800/70">
-          <button
-            id="btn_select_prev_bone"
-            onClick={() => studioStore.selectPreviousBone()}
-            disabled={!hasBones}
-            title="Select Previous Bone (Left Arrow)"
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg transition"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-
           {/* Quick Bone Selector Dropdown */}
           <select
             id="select_active_bone"
@@ -1254,25 +956,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             )}
           </select>
 
-          <button
-            id="btn_select_next_bone"
-            onClick={() => studioStore.selectNextBone()}
-            disabled={!hasBones}
-            title="Select Next Bone (Right Arrow)"
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg transition"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-
-          <button
-            id="btn_select_parent_bone"
-            onClick={() => studioStore.selectParentBone()}
-            disabled={!selectedBone || !selectedBone.parentId}
-            title="Select Parent Bone"
-            className="hidden sm:flex p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg transition"
-          >
-            <CornerUpLeft className="w-3.5 h-3.5" />
-          </button>
         </div>
 
         {/* ADD & BRANCH & DELETE BONE BUTTONS */}
@@ -1296,25 +979,6 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
             <Pencil className="w-3.5 h-3.5" />
             <span>{isAddBoneMode ? 'Drawing...' : 'Click-to-Draw'}</span>
           </button>
-
-          <button id="btn_cut_tool" disabled={!mesh || !skeleton || skeleton.bones.length < 2 || !!mesh.cut}
-            onClick={() => { studioStore.setMode('rig'); studioStore.setTool(tool === 'cut' ? 'select' : 'cut'); }}
-            title={mesh?.cut ? 'Cut applied; undo to draw a different seam' : 'Draw a line to separate artwork between two bones'}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 ${tool === 'cut' ? 'bg-orange-500 text-white' : 'bg-slate-800 text-slate-200'}`}>
-            <Scissors className="w-3.5 h-3.5" /> Cut
-          </button>
-          {tool === 'cut' && skeleton && <div className="flex items-center gap-1 text-xs text-white">
-            <select aria-label="Bone on left of drawn line" value={cutLeftBone || selectedBoneId || ''}
-              onChange={e => setCutLeftBone(e.target.value)} className="bg-slate-900 max-w-24">
-              <option value="">Left bone</option>
-              {skeleton.bones.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-            <select aria-label="Bone on right of drawn line" value={cutRightBone || skeleton.bones.find(b => b.id !== (cutLeftBone || selectedBoneId))?.id || ''}
-              onChange={e => setCutRightBone(e.target.value)} className="bg-slate-900 max-w-24">
-              <option value="">Right bone</option>
-              {skeleton.bones.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
-          </div>}
 
           <button
             id="btn_add_branch_bone"
@@ -1342,40 +1006,8 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
           </button>
         </div>
 
-        {/* EASY MOVE & ROTATION NUDGE POSE BUTTONS */}
+        {/* Pose and paint tools */}
         <div className="flex items-center gap-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800/70">
-          <button
-            id="btn_rotate_neg_15"
-            onClick={() => studioStore.quickRotateBone(-15)}
-            disabled={!selectedBone}
-            title="Rotate Bone -15°"
-            className="px-1.5 sm:px-2 py-1 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg text-xs font-mono transition flex items-center gap-0.5"
-          >
-            <RotateCcw className="w-3 h-3 text-sky-400" />
-            <span>-15°</span>
-          </button>
-
-          <button
-            id="btn_rotate_pos_15"
-            onClick={() => studioStore.quickRotateBone(15)}
-            disabled={!selectedBone}
-            title="Rotate Bone +15°"
-            className="px-1.5 sm:px-2 py-1 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg text-xs font-mono transition flex items-center gap-0.5"
-          >
-            <RotateCw className="w-3 h-3 text-sky-400" />
-            <span>+15°</span>
-          </button>
-
-          <button
-            id="btn_reset_bone_angle"
-            onClick={() => studioStore.resetBoneAngle()}
-            disabled={!selectedBone}
-            title="Reset Bone Angle to Rest Pose"
-            className="hidden sm:flex p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none rounded-lg transition"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-
           <button
             id="btn_toggle_ik_mode"
             onClick={() => studioStore.setTool(tool === 'ik' ? 'select' : 'ik')}
