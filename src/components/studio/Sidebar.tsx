@@ -485,6 +485,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenUploadModal, onOpenLoadM
                   </label>
                 </div>
 
+                <div className="flex gap-2 text-xs">
+                  <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'min')}
+                    className="flex-1 rounded bg-slate-900 border border-amber-500/40 p-2 text-amber-300">
+                    Set min {selectedBone.minAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.minAngle))}°`}
+                  </button>
+                  <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'max')}
+                    className="flex-1 rounded bg-slate-900 border border-amber-500/40 p-2 text-amber-300">
+                    Set max {selectedBone.maxAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.maxAngle))}°`}
+                  </button>
+                </div>
+                {(selectedBone.minAngle !== undefined || selectedBone.maxAngle !== undefined) &&
+                  <button onClick={() => studioStore.clearAngleLimits(selectedBone.id)}
+                    className="text-xs text-slate-400 underline">Clear angle limits</button>}
+
                 {/* Local Rotation & Quick Nudges */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400">

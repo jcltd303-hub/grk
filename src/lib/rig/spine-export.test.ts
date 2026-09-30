@@ -110,17 +110,15 @@ test('painted parts export as separate attachments on their owning bones', () =>
   assert.equal(output.skins[0].attachments.part_1.part_1.width,12);
 });
 
-test('Spine package bakes exclusive painted alpha into one PNG per bone', async()=>{
+test('painted rig package keeps a single weighted image and editable mask', async()=>{
   const image={width:4,height:2,naturalWidth:4,naturalHeight:2} as HTMLImageElement;
   const previous=globalThis.document;
   globalThis.document={createElement:()=>{
-    const canvas:{width:number;height:number;pixels?:Uint8ClampedArray;getContext:()=>unknown;toBlob:(callback:(blob:Blob)=>void)=>void}={
-      width:0,height:0,
-      getContext:()=>({drawImage:()=>{},getImageData:()=>({data:new Uint8ClampedArray(canvas.width*canvas.height*4).fill(255)}),putImageData:(data:{data:Uint8ClampedArray})=>{canvas.pixels=data.data;}}),
-      toBlob:(callback)=>callback(new Blob([Uint8Array.from(canvas.pixels!) as BlobPart]))
-    };return canvas;
+    const canvas={width:0,height:0,getContext:()=>({drawImage:()=>{}}),
+      toBlob:(callback:(blob:Blob)=>void)=>callback(new Blob([new Uint8Array(4)]))};
+    return canvas;
   }} as unknown as Document;
-  try{
+  try {
     const skel:Skeleton={bones:[
       {id:'a',name:'A',parentId:null,localAngle:0,length:2,color:'#fff',start:{x:0,y:1},end:{x:2,y:1},worldAngle:0},
       {id:'b',name:'B',parentId:'a',localAngle:0,length:2,color:'#fff',start:{x:2,y:1},end:{x:4,y:1},worldAngle:0},
@@ -130,11 +128,10 @@ test('Spine package bakes exclusive painted alpha into one PNG per bone', async(
     const {unzipSync}=await import('fflate');
     const {createSpinePackage}=await import('./spine-package');
     const zip=unzipSync(new Uint8Array(await (await createSpinePackage({skeleton:skel,mesh,clips:[],image,partOwnership:ownership})).arrayBuffer()));
-    assert.ok(zip['part_0.png']&&zip['part_1.png']);
-    assert.equal(JSON.parse(new TextDecoder().decode(zip['rig.json'])).slots.length,2);
-    assert.equal(zip['part_0.png'][3],255);
-    assert.equal(zip['part_0.png'][7],0);
-    assert.equal(zip['part_1.png'][3],255);
-    assert.equal(zip['part_1.png'][7],0);
-  }finally{globalThis.document=previous;}
+    assert.ok(zip['artwork.png']);
+    assert.equal(zip['part_0.png'],undefined);
+    const rig=JSON.parse(new TextDecoder().decode(zip['rig.json']));
+    assert.equal(rig.slots.length,1);
+    assert.ok(rig.skins[0].attachments[rig.slots[0].name]);
+  } finally {globalThis.document=previous;}
 });

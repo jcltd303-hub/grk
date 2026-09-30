@@ -1,3 +1,4 @@
+import { applyPartWeights, constrainAngle } from '../lib/rig/part-deform';
 import {
   Skeleton,
   RigMesh,
@@ -152,6 +153,8 @@ export interface StudioState {
   resetBoneAngle: (boneId?: string) => void;
   rotateBone: (boneId: string, deltaAngle: number) => void;
   setBoneAngle: (boneId: string, angle: number) => void;
+  setAngleLimit: (boneId: string, side: 'min' | 'max', value?: number) => void;
+  clearAngleLimits: (boneId: string) => void;
   setBoneLength: (boneId: string, length: number) => void;
   setBoneName: (boneId: string, name: string) => void;
   setBoneStartWidth: (boneId: string, width: number) => void;
@@ -263,6 +266,8 @@ class StudioStore {
       saveHistory: () => this.saveHistory(),
       rotateBone: (id, delta) => this.rotateBone(id, delta),
       setBoneAngle: (id, angle) => this.setBoneAngle(id, angle),
+      setAngleLimit: (id, side, value) => this.setAngleLimit(id, side, value),
+      clearAngleLimits: (id) => this.clearAngleLimits(id),
       setBoneLength: (id, len) => this.setBoneLength(id, len),
       setBoneName: (id, name) => this.setBoneName(id, name),
       setBoneStartWidth: (id, w) => this.setBoneStartWidth(id, w),
@@ -728,6 +733,12 @@ class StudioStore {
               return;
             }
           }
+          if (restoredParts) {
+            mesh = generateMesh(w, h, Math.max(18, Math.min(160, Math.ceil(w / 7))),
+              Math.max(26, Math.min(160, Math.ceil(h / 7))), alphaMask);
+            computeAutoWeights(mesh, restSkeleton);
+            applyPartWeights(mesh, restoredParts, restSkeleton);
+          }
           this.setState({
             activePresetId: '',
             image: img,
@@ -952,7 +963,7 @@ class StudioStore {
     const bone = skeleton.bones.find((b) => b.id === boneId);
     if (!bone) return;
 
-    bone.localAngle = normalizeAngle(angle);
+    bone.localAngle = constrainAngle(normalizeAngle(angle), bone);
     updateWorldTransforms(skeleton);
 
     if (mode === 'rig') {
@@ -963,6 +974,33 @@ class StudioStore {
       return;
     }
 
+    this.updateDeformedMesh();
+  }
+
+  public setAngleLimit(boneId: string, side: 'min' | 'max', value?: number) {
+    const bone = this.state.skeleton?.bones.find(b => b.id === boneId);
+    if (!bone) return;
+    this.saveHistory();
+    const angle = value === undefined ? bone.localAngle : normalizeAngle(value);
+    if (side === 'min') {
+      bone.minAngle = angle;
+      if (bone.maxAngle !== undefined && angle > bone.maxAngle) bone.maxAngle = angle;
+    } else {
+      bone.maxAngle = angle;
+      if (bone.minAngle !== undefined && angle < bone.minAngle) bone.minAngle = angle;
+    }
+    const bind = this.state.restSkeleton?.bones.find(b => b.id === boneId);
+    if (bind) { bind.minAngle = bone.minAngle; bind.maxAngle = bone.maxAngle; }
+    this.updateDeformedMesh();
+  }
+
+  public clearAngleLimits(boneId: string) {
+    const bone = this.state.skeleton?.bones.find(b => b.id === boneId);
+    if (!bone) return;
+    this.saveHistory();
+    bone.minAngle = undefined; bone.maxAngle = undefined;
+    const bind = this.state.restSkeleton?.bones.find(b => b.id === boneId);
+    if (bind) { bind.minAngle = undefined; bind.maxAngle = undefined; }
     this.updateDeformedMesh();
   }
 
@@ -1481,8 +1519,9 @@ class StudioStore {
       fitEnvelopesToAlpha(bindSkeleton, alphaMask, mesh.width, mesh.height);
     }
     computeAutoWeights(mesh, bindSkeleton);
+    if (this.state.partOwnership) applyPartWeights(mesh, this.state.partOwnership, bindSkeleton);
     for (const vertex of mesh.vertices) {
-      if (vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
+      if (!this.state.partOwnership && vertex.cutBoneId && bindSkeleton.bones.some(b => b.id === vertex.cutBoneId)) {
         vertex.weights = [{ boneId: vertex.cutBoneId, weight: 1 }];
       }
     }
@@ -1597,6 +1636,11 @@ class StudioStore {
     this.saveHistory();
     if (!this.state.partOwnership || this.state.partOwnership.width !== mesh.width || this.state.partOwnership.height !== mesh.height) {
       this.state.partOwnership = createPartOwnership(skeleton,alphaMask,mesh.width,mesh.height);
+      // A continuous grid avoids legacy split seams and follows the painted field.
+      const fresh = generateMesh(mesh.width, mesh.height,
+        Math.max(18, Math.min(160, Math.ceil(mesh.width / 7))),
+        Math.max(26, Math.min(160, Math.ceil(mesh.height / 7))), alphaMask);
+      this.state.mesh = fresh;
     }
     this.partStrokeActive = true;
     this.paintPart(point);
@@ -1609,7 +1653,7 @@ class StudioStore {
     if (!partOwnership.boneIds.includes(selectedBoneId)) partOwnership.boneIds.push(selectedBoneId);
     const detail = partBrushSmart ? this.getDetailPixels() : null;
     if (paintPartStroke(partOwnership,alphaMask,detail,point,partBrushRadius,selectedBoneId,
-      partBrushErase ? 'erase' : 'paint',partBrushSmart && !!detail)) this.notify();
+      partBrushErase ? 'erase' : 'paint',partBrushSmart && !!detail)) this.refreshAutomaticSkinning(false);
   }
 
   public endPartStroke() { this.partStrokeActive = false; }
@@ -1717,7 +1761,7 @@ class StudioStore {
     for (const bone of skeleton.bones) {
       const angleA = prev.boneRotations[bone.id] ?? bone.localAngle;
       const angleB = next.boneRotations[bone.id] ?? bone.localAngle;
-      bone.localAngle = lerpAngle(angleA, angleB, alpha);
+      bone.localAngle = constrainAngle(lerpAngle(angleA, angleB, alpha), bone);
     }
 
     this.updateDeformedMesh();

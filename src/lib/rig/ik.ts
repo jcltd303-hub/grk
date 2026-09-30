@@ -1,3 +1,4 @@
+import { constrainAngle } from './part-deform';
 import { Skeleton, Point2D, Bone } from './types';
 import { updateWorldTransforms, getBoneChainToRoot } from './skeleton';
 import { angleBetween, distance, normalizeAngle } from './math';
@@ -53,9 +54,7 @@ export function solveCCD2D(
       bone.localAngle = normalizeAngle(bone.localAngle + deltaAngle);
 
       // Apply optional angle constraints if present
-      if (bone.minAngle !== undefined && bone.maxAngle !== undefined) {
-        bone.localAngle = Math.max(bone.minAngle, Math.min(bone.maxAngle, bone.localAngle));
-      }
+      bone.localAngle = constrainAngle(bone.localAngle, bone);
 
       updateWorldTransforms(skeleton);
 

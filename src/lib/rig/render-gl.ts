@@ -1,6 +1,6 @@
 import { RigMesh, Skeleton, Bone, Point2D, StudioMode } from './types';
 import { degToRad } from './math';
-import { computeBoneDeltaTransforms } from './skeleton';
+import { rotationHandle } from './part-deform';
 import type { PartOwnership } from './part-brush';
 
 export interface RenderOptions {
@@ -63,12 +63,8 @@ export function renderRigScene(
   // 1. Draw Character Texture
   // In RIG MODE, the character NEVER bends or distorts: render original unbent image!
   if (options.showTexture && image) {
-    if (options.partOwnership && skeleton && options.bindSkeleton && !isRigMode) {
-      drawPartSprites(ctx, image, options.partOwnership, skeleton, options.bindSkeleton);
-    } else if (isRigMode || !mesh || mesh.triangles.length === 0) {
-      ctx.save();
+    if (isRigMode || !mesh || mesh.triangles.length === 0) {
       ctx.drawImage(image, 0, 0, mesh?.width || image.width, mesh?.height || image.height);
-      ctx.restore();
     } else {
       drawDeformedMesh(ctx, image, mesh);
     }
@@ -112,37 +108,7 @@ export function renderRigScene(
   ctx.restore();
 }
 
-type Sprite = { image: HTMLCanvasElement; x: number; y: number; boneId: string };
-const partCanvasCache = new WeakMap<PartOwnership, { revision:number; source:CanvasImageSource; sprites:Sprite[] }>();
 const partOverlayCache = new WeakMap<PartOwnership, {revision:number;canvas:HTMLCanvasElement}>();
-function partCanvases(mask:PartOwnership, source:HTMLImageElement | HTMLCanvasElement, skeleton:Skeleton) {
-  const cached=partCanvasCache.get(mask);
-  if(cached?.revision===mask.revision && cached.source===source) return cached;
-  const {width,height,pixels,boneIds}=mask;
-  const boxes=boneIds.map(()=>({left:width,top:height,right:-1,bottom:-1}));
-  for(let i=0;i<pixels.length;i++){
-    const index=pixels[i]-1;if(index<0||index>=boxes.length)continue;
-    const x=i%width,y=(i/width)|0,b=boxes[index];
-    b.left=Math.min(b.left,x);b.right=Math.max(b.right,x);
-    b.top=Math.min(b.top,y);b.bottom=Math.max(b.bottom,y);
-  }
-  const sprites:Sprite[]=[];
-  for(let k=0;k<boxes.length;k++){
-    const box=boxes[k];if(box.right<0||!skeleton.bones.some(b=>b.id===boneIds[k]))continue;
-    const canvas=document.createElement('canvas');
-    canvas.width=box.right-box.left+1;canvas.height=box.bottom-box.top+1;
-    const ctx=canvas.getContext('2d');if(!ctx)continue;
-    ctx.drawImage(source,-box.left,-box.top,width,height);
-    const data=ctx.getImageData(0,0,canvas.width,canvas.height);
-    for(let y=0;y<canvas.height;y++)for(let x=0;x<canvas.width;x++)
-      if(pixels[(y+box.top)*width+x+box.left]!==k+1)data.data[(y*canvas.width+x)*4+3]=0;
-    ctx.putImageData(data,0,0);
-    sprites.push({image:canvas,x:box.left,y:box.top,boneId:boneIds[k]});
-  }
-  const result={revision:mask.revision,source,sprites};
-  partCanvasCache.set(mask,result);
-  return result;
-}
 function drawPartColors(ctx:CanvasRenderingContext2D,mask:PartOwnership,skeleton:Skeleton){
   let cache=partOverlayCache.get(mask);
   if(!cache||cache.revision!==mask.revision){
@@ -165,16 +131,6 @@ function drawPartColors(ctx:CanvasRenderingContext2D,mask:PartOwnership,skeleton
   }
   ctx.drawImage(cache.canvas,0,0);
 }
-function drawPartSprites(ctx:CanvasRenderingContext2D,image:HTMLImageElement | HTMLCanvasElement,
-  mask:PartOwnership,skeleton:Skeleton,bind:Skeleton){
-  const transforms=computeBoneDeltaTransforms(skeleton,bind);
-  for(const sprite of partCanvases(mask,image,skeleton).sprites){
-    const t=transforms.get(sprite.boneId);if(!t)continue;
-    ctx.save();ctx.transform(t.cos,t.sin,-t.sin,t.cos,t.tx,t.ty);
-    ctx.drawImage(sprite.image,sprite.x,sprite.y);ctx.restore();
-  }
-}
-
 function drawWeightBrushHUD(
   ctx: CanvasRenderingContext2D,
   preview: {
@@ -520,6 +476,14 @@ function drawSkeleton(ctx: CanvasRenderingContext2D, skeleton: Skeleton, options
       ctx.setLineDash([3, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    if (isSelected && (options.mode === 'rig' || options.mode === 'pose' || options.mode === 'animate')) {
+      const handle = rotationHandle({ x: start.x, y: start.y, worldAngle: bone.worldAngle });
+      ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(handle.x, handle.y);
+      ctx.strokeStyle = 'rgba(251, 191, 36, .8)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(handle.x, handle.y, 9 / options.zoom, 0, Math.PI * 2);
+      ctx.fillStyle = '#fbbf24'; ctx.fill(); ctx.strokeStyle = '#0f172a'; ctx.stroke();
     }
 
     // Start Joint (Pivot) - Larger touch/click friendly handle

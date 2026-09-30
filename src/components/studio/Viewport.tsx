@@ -1,3 +1,4 @@
+import { rotationHandle } from '../../lib/rig/part-deform';
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useStudioStore, studioStore } from '../../store/studio';
 import { renderRigScene } from '../../lib/rig/render-gl';
@@ -517,7 +518,27 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         return;
       }
 
+      // The rotation grip is checked ahead of joints so it remains usable on short bones.
+      if (selectedBone && (mode === 'rig' || mode === 'pose' || mode === 'animate')) {
+        const handle = rotationHandle({ x: selectedBone.start.x, y: selectedBone.start.y, worldAngle: selectedBone.worldAngle });
+        if (distance(worldPos, handle) < 18 / zoom) {
+          studioStore.saveHistory();
+          setDragAction({ type: 'bone_rotate', boneId: selectedBone.id,
+            startAngle: selectedBone.localAngle, mouseStartAngle: angleBetween(selectedBone.start, worldPos) });
+          return;
+        }
+      }
+
       // NORMAL SELECTION & INTERACTION MODE
+      if (selectedBone && (mode === 'rig' || mode === 'pose' || mode === 'animate')) {
+        const handle = rotationHandle({ x: selectedBone.start.x, y: selectedBone.start.y, worldAngle: selectedBone.worldAngle });
+        if (distance(worldPos, handle) < 24 / zoom) {
+          studioStore.saveHistory();
+          setDragAction({ type: 'bone_rotate', boneId: selectedBone.id,
+            startAngle: selectedBone.localAngle, mouseStartAngle: angleBetween(selectedBone.start, worldPos) });
+          return;
+        }
+      }
       const { boneId, joint } = findHoverTarget(worldPos);
 
       if (boneId) {
@@ -541,6 +562,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
 
         // Pose mode: rotate bone smoothly from mouse angle
         const mouseAngle = angleBetween(bone.start, worldPos);
+        studioStore.saveHistory();
         setDragAction({
           type: 'bone_rotate',
           boneId,
@@ -691,6 +713,7 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
         }
 
         const mouseAngle = angleBetween(bone.start, worldPos);
+        studioStore.saveHistory();
         setDragAction({
           type: 'bone_rotate',
           boneId,
@@ -1074,6 +1097,13 @@ export const Viewport: React.FC<ViewportProps> = ({ onToggleSidebar, isSidebarOp
               )}
               <span>{selectedBone.isPinned ? 'Pinned' : 'Pin'}</span>
             </button>
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'min')}
+              className="flex-1 rounded bg-slate-800 px-2 py-1 text-amber-300">Set min {selectedBone.minAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.minAngle))}°`}</button>
+            <button onClick={() => studioStore.setAngleLimit(selectedBone.id, 'max')}
+              className="flex-1 rounded bg-slate-800 px-2 py-1 text-amber-300">Set max {selectedBone.maxAngle === undefined ? '' : `${Math.round(radToDeg(selectedBone.maxAngle))}°`}</button>
           </div>
 
           {/* Envelope Width Slider 1: Start Width (Pivot) */}
