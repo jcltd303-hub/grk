@@ -1,117 +1,132 @@
-# UniMate and DIMO integration for Bendy / GRK
+# Android native UniMate and DIMO for Bendy / GRK
 
-Status: draft for user review. Product implementation has not started.
+Status: revised draft for user review. Product implementation has not started.
 
-## Intent and assumptions
+## Goal and agreed constraints
 
-Add the actual UniMate and DIMO models to the existing editor. The user explicitly selected actual models through a GPU worker, with results brought back into GRK. The target repository is assumed to be `jcltd303-hub/grk` from the Bendy project context.
+Add the actual UniMate and DIMO capabilities to GRK for local use on a Samsung S24 Ultra. The user selected actual models, then replaced the proposed PyTorch/server GPU stack with an Android native stack. This revision supersedes the remote-worker design.
 
-Success means a user can submit their own asset, generate real model output, preview it, and retain an exportable result. A preset or simulated worker response does not satisfy this requirement.
+The installed application performs inference and motion processing on the phone. Its execution path uses Kotlin, Android NDK C++, native model runtimes, and Android graphics/media APIs. It contains no Python interpreter, PyTorch/libtorch, CUDA, conda environment, or Termux dependency. A remote inference service is not part of the normal workflow.
 
-Preserve the current mobile workflow and exclusive ownership of artwork pixels. Keep model controls together in the existing animation panel. Heavy processing runs outside the browser and the Vite bundle.
+Original checkpoint export and quantization may use upstream Python/PyTorch tools on a build machine. They produce portable model packs and numerical reference fixtures; they do not ship in the APK or run during phone generation. The replacement concerns the installed runtime, not the original checkpoint format.
 
-Inspected GRK revision: `3503870904f413067499bad369ca381f16eadef0`.
+The target remains `jcltd303-hub/grk`, inferred from Bendy context. Preserve the mobile editor, exclusive pixel ownership, joint limits, undo/redo, and Spine export. Package the current editor in a native Android application while moving model execution into native code.
 
-## Features and their outputs
+Inspected revisions: GRK `3503870904f413067499bad369ca381f16eadef0`; UniMate `004d787452e0bf8253d669d6e7b26c2064055cad`; DIMO `0c5938689071eda305d6625160e5d6e032a0ff9a`.
 
-| Model | Features to expose | Result in GRK |
-| --- | --- | --- |
-| UniMate | Text-generated motion variants; keyframe in-betweening; prompt-based editing while retaining selected joints; chained prompts for longer motion | Preview; projected, editable 2D clips when a joint map exists; native 3D artifacts for uploaded rigged assets |
-| DIMO | Image-to-object motion learning; motion rendering; latent interpolation; language-guided motion; fitting an unseen motion, including the unaligned fitting mode | Reference and orbit previews; rendered frame export; reusable trained object and derived model artifacts |
+## Native stack
 
-UniMate and DIMO have different representations. DIMO's learned Gaussian scene and unsupervised key points do not provide a named skeletal hierarchy. Its initial integration therefore produces rendered animation assets rather than automatically claiming a Spine skeleton. UniMate clips mapped onto the current rig use the existing Spine export path.
-
-## Recommended architecture
-
-Use one asynchronous motion-service interface with isolated model environments. This keeps the frontend workflow unified and allows the worker environments to share one GPU sequentially. Separate GPU hosts remain an alternative if throughput later requires them.
-
-The editor sends authenticated asset and job requests through a small application API. Model subprocesses run on a separate NVIDIA CUDA worker. The API returns promptly; the editor polls job status. GPU work never lives inside a request to the frontend hosting service.
-
-Worker configuration includes upstream checkout locations, Python interpreters, checkpoint locations, an artifact directory, and allowed frontend origins. Pin the inspected upstream revisions rather than tracking `main` automatically:
-
-- UniMate: `004d787452e0bf8253d669d6e7b26c2064055cad`.
-- DIMO: `0c5938689071eda305d6625160e5d6e032a0ff9a`.
-
-Dependencies require separate environments: UniMate; DIMO's PyTorch/CUDA stack; the selected image-to-video backend; SV4D; and a local vision-language model environment if selected. Follow each upstream setup rather than resolving these into one Python installation.
-
-Provisioning or purchasing GPU resources is outside this change. Deliver a portable worker setup and configuration instructions, and connect an existing worker when its URL and credentials are available.
-
-## Asset and job API
-
-The new service owns asset IDs, immutable input snapshots, job records, and artifact IDs. Browser requests never specify worker filesystem paths or arbitrary commands.
-
-| Route | Purpose |
+| Existing responsibility | Android native replacement |
 | --- | --- |
-| `POST /api/motion/assets` | Register an image, native rigged asset, or current-rig snapshot; return an upload target |
-| `GET /api/motion/assets/:id` | Read preprocessing state, joint labels, facing information, and available trained DIMO motions |
-| `POST /api/motion/assets/:id/review` | Submit reviewed UniMate labels and facing information |
-| `POST /api/motion/jobs` | Enqueue an allowlisted model operation against an asset ID |
-| `GET /api/motion/jobs/:id` | Return state, processing stage, progress details, errors, and available artifacts |
-| `POST /api/motion/jobs/:id/cancel` | Cancel queued or running work |
-| `GET /api/motion/artifacts/:id` | Authorize artifact download or return a short-lived download URL |
+| Python orchestration | Kotlin lifecycle and local job scheduler |
+| PyTorch neural inference | ONNX Runtime C++ built for Android ARM64 |
+| CUDA neural execution | Qualcomm QNN HTP/NPU for validated quantized graphs; QNN GPU for compatible float graphs; explicit ARM CPU fallback |
+| Transformers text encoding | Exported encoder graphs and native SentencePiece/WordPiece tokenizers with matching pooling |
+| NumPy/SciPy conditioning and geometry | C++ tensor buffers, linear algebra, graph operations, and forward kinematics |
+| torchdiffeq sampling | C++ flow integrator, classifier-free guidance, constraint replacement, and motion decoding |
+| CUDA Gaussian rasterizers | New Vulkan compute renderer with a CPU reference for verification |
+| Python image/video handling | Android image APIs, PNG export, MediaCodec, and MediaMuxer |
+| Remote worker API | Typed asynchronous Android bridge and JNI calls |
 
-The worker persists its queue and stage results. Job states include `queued`, `running`, `needs_review`, `succeeded`, `failed`, and `cancelled`. Progress reports the current stage and available upstream counts rather than inventing elapsed-time estimates. Restarting the worker marks interrupted subprocesses accurately and allows explicit stage resume.
+Recommend ONNX Runtime C++ plus QNN because it permits a native correctness baseline and measured accelerator partitioning. This does not establish that these exact model graphs are already convertible. Direct QNN C++ is an alternative with fewer runtime layers and more model-specific fallback code. LiteRT is another native alternative, but adds a conversion path whose operator coverage must be demonstrated.
 
-Authenticate before accepting uploads, starting jobs, or accessing artifacts. Keep worker credentials server-side. A deployment without existing user accounts can use an access token supplied when connecting the editor; do not embed a shared compute credential in the frontend build. Large assets upload directly to an authorized worker upload target.
+Build and package Android QNN libraries; a Windows QNN Python package is not an Android dependency. Match runtime/provider/context/SoC versions, and verify ARM64 native libraries support Android's 16 KiB page-size requirements.
 
-Validate file types, decoded image sizes, rig topology, operation parameters, and upload sizes. Generate job-scoped directories and use argument arrays for subprocesses. Constrain artifacts to those directories. Cancellation terminates the relevant subprocess tree and cannot publish a later result as successful.
+## Android application and local jobs
 
-## UniMate path
+Add an `android/` host application and NDK library. Bundle GRK's production frontend as local assets using Android's local-content APIs. A typed bridge supplies native capabilities, model-pack import, asset preparation, job submission, progress, cancellation, and artifact access. Restrict the bridge to the bundled editor's trusted origin.
 
-Support native rigged GLB and FBX uploads through upstream `data_process.rig_preprocess`. The first preprocessing pass stops for label and facing review. Display its annotated preview and allow corrections before continuing. Retain original-to-canonical joint correspondence and scale/orientation metadata.
+Model files and large buffers stay in native/app storage. Exchange IDs and compact results through the bridge rather than model weights or raw video frames. No public localhost server or compute credential is required. Import through Android's Storage Access Framework; export through system file/media APIs. Persist jobs, model manifests, and resumable stage boundaries in app-private storage.
 
-For current 2D artwork, build a planar rigged asset from the rest skeleton and existing mesh ownership. Preserve stable bone IDs through explicit metadata. Treat planar lifting and projection as experimental until demonstrated on representative GRK assets; native 3D input provides the upstream-supported path. Do not infer full hidden 3D anatomy from a flat image.
+Run inference off the UI thread and serialize heavy jobs. Release unused sessions and GPU buffers between text encoding, denoising, and rendering. Cache small embeddings by tokenizer/checkpoint identity. Job states include `queued`, `preparing`, `needs_review`, `running`, `paused`, `succeeded`, `failed`, `cancelled`, and `unsupported`.
 
-Invoke `python -m unimate.inference.sample` with job-specific asset, prompt, seed, repetition count, and output directory. Read limits and sample length from the configured checkpoint. The recommended v3 model uses a 60-frame generation window; expansion handles longer sequences.
+Report actual stages and counts. Cancellation interrupts native loops and cannot publish later success. Lifecycle interruption must be visible and resumable rather than implying unlimited background execution. Monitor Android memory-pressure and thermal signals; reduce buffers or pause before resource exhaustion. Determine scene sizes, memory budgets, and timing from handset measurements rather than nominal total RAM.
 
-In-betweening and joint editing require a real source motion clip in the asset's feature layout. Convert the active GRK clip through the same rig correspondence and canonicalization, rather than passing only a list of selected timestamps. Validate the source window, retained frame indices, and joint-name matches. The three constrained sampling modes are mutually exclusive.
+## Model packs and conversion
 
-Use the upstream motion decoder and mesh animation path for native results. Convert mapped joints to GRK local angles with an explicit projection plane, Y-axis convention, rest calibration, and scale. Preserve fixed GRK bone lengths, pinned joints, angle limits, and the selected retained joints. Reject nonfinite or incompatible outputs. Keep the native result alongside the projected clip because projection loses depth.
+A versioned pack contains native graphs or QNN contexts, tokenizer assets, normalization statistics, skeleton vocabulary/conditioning metadata, licenses, and numerical fixtures. Its manifest records layouts, static shape profiles, sample window/frame rate, solver configuration, joint budget, precision, source/checkpoint hashes, provider compatibility, and runtime version.
 
-## DIMO path
+DIMO packs also contain canonical Gaussian parameters, key points, motion ordering, latent codes, and a matching object-specific text projector when available. Parse JSON and typed arrays on the phone; do not load pickle dictionaries or PyTorch checkpoints in the app.
 
-Start from the user's image and motion descriptions. Run the upstream caption, image-to-video, filtering, multi-view generation, and dataset assembly stages in distinct, resumable jobs. Allow a worker-configured local vision-language model or provider; keep provider credentials on the worker. Rejected or empty datasets must produce actionable failures.
+QNN requires fixed shapes and supported operators. Export neural forward passes; keep variable loops and geometry in C++. Lower attention to compatible graph operations where needed. Preserve graph biases, masks, RoPE, embeddings, AdaLN, prefix frames, and exact checkpoint conditioning. Compute static skeleton graph data on the CPU.
 
-Train the object's DIMO model through both training stages. Then train the BERT-to-latent text projector against that object's captions and the saved `motion_order.json`. Language generation cannot be enabled merely because a Gaussian checkpoint exists; the matching text projector is required.
+Establish a native CPU baseline before quantization. Calibrate candidate precisions with representative rigs, prompts, timesteps, and motions. Verify both numerical and motion quality. Record actual provider assignment; diagnostic runs disable CPU fallback when verifying an all-NPU claim. A backend label alone does not prove acceleration.
 
-Persist a trained-object manifest containing source hash, dataset shape, frame sampling, training configuration, motion ordering, checkpoint revision, and projector identity. Subsequent rendering, interpolation, language generation, and fitting operations reference that trained object.
+Reference fixtures use identical input/noise tensors and time schedules. A matching seed alone does not prove parity between different random-number generators. Record the phone RNG version for reproducible jobs.
 
-Expose the real `test.py` modes: `render`, `interpolation`, `language`, `fit_motion`, and `fit_unaligned_motion`. Fitting requires the upstream multi-view frame layout; describe that requirement in the upload control. Save derived fitting results separately so decoder refinement does not overwrite the original trained object.
+## UniMate native generation
 
-Return reference/orbit video previews and model artifacts. A worker render adapter captures RGB and alpha from the Gaussian renderer for transparent PNG frames and sprite-sheet export. Do not remove white foreground details by substituting background-color keying for alpha. Keep DIMO exports identifiable as rendered animation rather than skeletal clips.
+Export the trained denoiser and its exact frozen text encoder. Implement matching native tokenization, masking, and pooling. Cache reviewed joint-label embeddings and encode new labels locally. Port flow sampling, guidance, normalization, motion recovery, and forward kinematics to C++. Read the solver from the pack; reduced-step modes require separate quality measurements.
 
-## GRK integration points
+Expose genuine prompt generation, in-betweening, editing that retains selected joints, and prompt-sequence expansion. Generate variants sequentially to bound memory. Constrained modes remain mutually exclusive per sampling job. Convert the active GRK clip into canonical features and retain known constraints during the relevant solver evaluations, not merely by changing final displayed angles.
 
-- Add `src/components/studio/MotionGenerationPanel.tsx` inside the animation tab of `Sidebar.tsx`. On mobile, reuse the existing inspector drawer. Include model selection, prompts, operation-specific controls, source asset selection, progress, cancellation, result preview, and an explicit apply/export action.
-- Add focused motion contracts, client transport, and projection helpers under `src/lib/motion/`. Keep model adapters on the worker rather than shipping Python/model files in the frontend.
-- Extend `src/store/studio.ts` with validated clip insertion and motion-aware history. Current history snapshots omit clips and the active clip; generated clip application must undo and redo atomically.
-- Apply `Keyframe.rootOffset` during playback relative to `restRootPos`. The type and Spine exporter already include root offsets, but current playback only interpolates angles. Capture root offsets when recording poses.
-- Associate pending results with an immutable rig fingerprint. If the rig changes while a job runs, preserve the artifact and require remapping rather than applying motion to unrelated bones.
-- Preserve imported motion provenance in project JSON: provider, operation, prompt, seed, input fingerprint, upstream revision, checkpoint identity, and artifact references. Old project files continue loading.
+Port rest-pose normalization, joint vocabulary/facing review, and correspondence into native preprocessing. There is no on-device Blender dependency. Current 2D rigs use a planar skeleton with stable bone IDs. Native GLB import is a second path; other formats require verified native importers.
 
-## Verification and delivery criteria
+Demonstrate planar rigs on representative artwork. Keep explicit projection plane, axis convention, scale, and rest calibration; flat images do not supply hidden 3D anatomy. Reject unsupported joint counts and invalid outputs. Return editable clips with parent-relative angles and root offsets while preserving lengths, pins, limits, and pixel ownership. Retain the 3D motion artifact and use existing Spine export for mapped clips.
 
-1. Run GRK's existing tests, TypeScript check, and production build after implementation.
-2. Add meaningful projection fixtures covering joint ordering, handedness, scale, parent-relative angles, angle wrap, root movement, and invalid or stale results.
-3. Verify generated clip application and undo/redo, including the active clip, root position, rest pose, and unchanged pixel ownership.
-4. Exercise authenticated job lifecycle, stage resume, cancellation, missing dependencies/checkpoints, failed subprocesses, invalid parameters, and artifact authorization without loading model weights in routine CI.
-5. Check the mobile flow at a phone viewport: enter a prompt, submit, dismiss the drawer, reopen status, cancel, preview, and apply or export.
-6. On a configured GPU worker, run real UniMate generation plus constrained modes using a supported native asset, and validate a representative GRK projection.
-7. On a configured GPU worker, run DIMO on a user image through training and projector creation, then render, interpolate, generate from text, and fit a held-out motion. Confirm alpha exports and derived checkpoint preservation.
+## DIMO native inference and rendering
 
-Integration tests using fixtures or fake subprocesses establish application behavior only. They do not establish actual model quality or end-to-end GPU readiness. This workspace has no NVIDIA device, PyTorch installation, or downloaded model checkpoints; real inference verification requires the configured external worker.
+Convert a real trained DIMO object to a native pack while preserving its learned latent space and deformation decoder. Run the decoder in bounded chunks. Port key-point deformation and quaternion math to C++. Implement Gaussian projection, covariance handling, tile binning, depth ordering, colors, opacity, and alpha compositing in Vulkan.
 
-## Published model terms
+Compare decoder and renderer outputs to upstream fixtures, including camera conventions and rectangular viewports. Expose rendering, orbit/camera previews, and latent interpolation. Language guidance additionally requires the matching BERT encoder/tokenizer and object-specific projector. Packs without the projector cannot advertise language generation.
 
-UniMate's code is MIT, while its released checkpoints are CC BY-NC 4.0. DIMO's code is MIT, while its required Gaussian rasterizers are restricted to non-commercial research and evaluation; other model components have separate terms. Retain upstream notices and model provenance. Commercial game-asset use needs appropriately permitted checkpoints/components or separate permissions.
+Export RGBA PNG frames and sprite sheets, and encode ordinary video previews using Android media APIs. Do not claim transparency in codecs that cannot preserve it. DIMO's Gaussian scene and unsupervised key points do not provide a named skeletal hierarchy; its initial outputs are rendered animation assets rather than automatically generated Spine rigs.
 
-## Sources inspected
+## Full DIMO training and image-to-motion
 
-- [UniMate source and applications](https://github.com/Friedrich-M/UniMate)
-- [UniMate custom-rig preprocessing](https://github.com/Friedrich-M/UniMate/tree/main/data_process/rig_preprocess)
+New-image object learning and unseen-motion fitting require an additional native training port. The upstream pipeline generates video/multi-view data, trains a Gaussian scene and decoder in two stages, and trains a text projector. Its default video/multi-view configuration recommends substantially more GPU memory than one phone app has available. Exporting inference graphs does not implement those steps.
+
+Keep full local functionality as a separate deliverable with explicit requirements:
+
+1. Convert and device-test image-to-video and multi-view model packs; measure memory and quality. Lower precision/resolution is not proof that the default pipeline fits. Preserve the frame/view layout expected by DIMO.
+2. Implement Gaussian forward/backward rendering, optimizer state, densification/pruning, and relevant image, geometry, ARAP, and latent losses in native code. QNN is an inference API. Android runtimes have some native training APIs, but they do not automatically replace DIMO's custom CUDA gradients.
+3. Stream training images/masks through bounded caches and save stage/optimizer checkpoints.
+4. Implement decoder/projector training or verified native training graphs with the necessary custom gradients. Preserve motion ordering and caption-to-latent pairing.
+5. Port aligned and unaligned fitting; store derived models without overwriting the original learned object.
+
+Until those requirements pass on the phone, new-image training and fitting are unavailable. Playback of a converted object is not full image-to-motion generation. A preset, invented model, remote job, or different motion algorithm cannot silently replace the requested models.
+
+The delivery sequence is: native Android foundation plus actual UniMate generation; actual DIMO inference/rendering for converted objects; independently verified full native DIMO training. These stages retain the complete goal while identifying unfinished capabilities clearly.
+
+## GRK integration
+
+- Add one motion panel in the existing animation tab and reuse the mobile inspector drawer. Show operations from native capabilities and installed packs, with concrete reasons for unavailable operations.
+- Add a typed local runtime interface under `src/lib/motion/` and its Android bridge. Browser-only GRK retains existing editing/export; native generation requires the Android host.
+- Extend `src/store/studio.ts` with validated clip insertion and atomic history of animation clips and active selection. Current snapshots omit clips.
+- Apply `Keyframe.rootOffset` relative to `restRootPos` during playback and capture it during recording; existing types/Spine exports already support root offsets.
+- Bind results to immutable source/rig fingerprints. Retain stale artifacts and require remapping before applying them to changed bones.
+- Export pack/checkpoint hashes, provider, prompt, seed/RNG version, operation, projection settings, and source fingerprint. Older projects continue loading.
+
+## Verification and completion
+
+1. Run existing GRK tests, TypeScript check, and production build after implementation.
+2. Verify native conditioning, text pooling, guidance, solver steps, constraint retention, decoding, projection, root motion, and stale-result rejection against source fixtures.
+3. Verify clip apply/undo/redo and exports without changing rest geometry or pixel ownership.
+4. Build the ARM64 APK and verify JNI loading, trusted editor bridge, pack import, cancellation, lifecycle interruption, artifact export, and native page-size compatibility.
+5. Run actual UniMate packs on the S24 Ultra. Measure provider assignment, wall time, peak resident memory, loading, thermal behavior, and real-prompt motion quality.
+6. Run real DIMO packs on the phone. Verify decoder/RGBA rendering parity, interpolation, matching-projector language guidance, cameras, and frame/video export.
+7. Independently verify full native DIMO learning/fitting before enabling it: gradient correctness, training behavior, resume, projector pairing, and bounded dataset memory.
+
+This workspace currently has no Android SDK/NDK toolchain, connected handset/ADB, or converted UniMate/DIMO packs. Source inspection and runtime documentation establish a proposed port, not a working APK, NPU compatibility, measured performance, or completed generation.
+
+## Model and runtime terms
+
+Retain upstream terms and provenance. UniMate code is MIT and released checkpoints are CC BY-NC 4.0. DIMO code is MIT; original Gaussian rasterizers have non-commercial restrictions, and video/matting weights have separate terms. A newly written renderer does not change other components' licenses. Check Qualcomm redistribution terms when packaging its libraries.
+
+## Primary sources
+
+- [UniMate source](https://github.com/Friedrich-M/UniMate)
 - [UniMate model card](https://huggingface.co/Linzhan/UniMate)
-- [DIMO source and applications](https://github.com/Friedrich-M/DIMO)
-- [DIMO image-to-dataset pipeline](https://github.com/Friedrich-M/DIMO/tree/main/data_generation)
+- [DIMO source](https://github.com/Friedrich-M/DIMO)
+- [DIMO data generation](https://github.com/Friedrich-M/DIMO/tree/main/data_generation)
 - [DIMO component licenses](https://github.com/Friedrich-M/DIMO/blob/main/LICENSE)
+- [ONNX Runtime QNN provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+- [ONNX Runtime Android build](https://onnxruntime.ai/docs/build/android.html)
+- [ONNX Runtime Android training example](https://onnxruntime.ai/docs/tutorials/on-device-training/android-app.html)
+- [Qualcomm QNN overview](https://docs.qualcomm.com/nav/home/QNN_general_overview.html?product=924033590759186372)
+- [Android Vulkan](https://developer.android.com/ndk/guides/graphics)
+- [Android local WebView content](https://developer.android.com/develop/ui/views/layout/webapps/load-local-content)
+- [Android 16 KiB page-size support](https://developer.android.com/guide/practices/page-sizes)
+- [LiteRT alternative](https://developers.google.com/edge/litert/overview)
 
-The next stage after design approval is a written implementation plan and execution-method selection, as required by the Superpowers architectural workflow.
+After revised-design approval, prepare the implementation plan and execution-method selection required by the Superpowers architectural workflow. The first plan covers the native foundation and UniMate; DIMO's inference/rendering and training ports have separate completion criteria.
